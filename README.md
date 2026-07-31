@@ -31,7 +31,14 @@ powerful enough to feel like a symbolic language when you want it to — and
 out of the way, running at ordinary function-call speed, when you don't.
 
 See [`docs/learn_minimatic_in_15_minutes.md`](docs/learn_minimatic_in_15_minutes.md)
-for a full language tour.
+for a full language tour, or run [`examples/tour.md`](examples/tour.md) —
+a Markdown document that's also a runnable demo of everything implemented
+so far (specificity dispatch, recursion via literal clauses, sequence
+blanks, `Listable` threading, `/.` rewriting, closures, and `|>`):
+
+```bash
+python -m minimatic examples/tour.md
+```
 
 ## Design goals
 

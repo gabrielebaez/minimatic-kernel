@@ -103,6 +103,14 @@ class Evaluator:
         if isinstance(head_val, Symbol):
             clause_set = self.registry.resolve(head_val.name)
             if clause_set is None:
+                # Not a registered head — but it might be a plain variable
+                # holding a callable value, e.g. `add5 = add(5)` followed
+                # by `add5(10)`. Registered heads take priority (the
+                # common case), env-bound callables are the fallback.
+                if env.has(head_val.name):
+                    callee = env.lookup(head_val.name)
+                    eval_args = [self.eval(arg, env) for arg in node.tail]
+                    return self.apply_value(callee, eval_args, env)
                 raise UnknownHeadError(head_val.name)
 
             attrs = self.registry.attributes(head_val.name)
