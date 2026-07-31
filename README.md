@@ -136,6 +136,44 @@ kernel.eval("double(x: _int) := 2 * x")
 kernel.eval("double(21)")  # 42
 ```
 
+## Minimatic is also just a Markdown file
+
+A Minimatic script can be a Markdown document: fence the runnable parts as
+` ```minimatic ` (or ` ```mmt `) and everything else — headings, prose,
+other languages' code blocks — is ignored, the same way a comment would
+be. Each block runs against the same kernel, in document order, so a
+later block sees whatever an earlier one defined:
+
+````markdown
+# My little script
+
+```minimatic
+double(x: _int) := 2 * x
+```
+
+Some prose in between blocks.
+
+```minimatic
+double(21)   (* 42 *)
+```
+````
+
+Run it from the CLI (`python -m minimatic path/to/file.md`), or from
+Python:
+
+```python
+from minimatic import Kernel
+
+kernel = Kernel()
+results = kernel.eval_file("path/to/file.md")   # list of every statement's result, in order
+```
+
+Passing any other extension to `eval_file` (or the CLI) runs the file as
+plain Minimatic source instead — no block boundaries, just a script.
+Bare (untagged) fences are never picked up; the tag is what makes a block
+runnable rather than illustrative prose, matching the existing design docs
+(which use untagged fences for examples, on purpose — they aren't scripts).
+
 ## Extending Minimatic from Python
 
 Registering a builtin is a single call: give it a name, an implementation,

@@ -699,6 +699,7 @@ minimatic/
   prelude.py
   extend.py
   kernel.py
+  markdown.py           # extracts ```minimatic / ```mmt fenced blocks from .md files
   errors.py
 
 tests/
@@ -713,15 +714,28 @@ tests/
   test_dispatch.py
   test_rewrite.py
   test_prelude.py
+  test_markdown.py
+  test_kernel.py
 
 pyproject.toml
 IMPLEMENTATION_PLAN.md  # this file
 ```
 
-## Status: MVP complete
+## Status: MVP complete, plus Markdown-as-script support
 
-All phases above are implemented; `uv run pytest` passes (69 tests), and
+All phases above are implemented; `uv run pytest` passes (82 tests), and
 both README flagship examples run correctly through `python -m minimatic`.
 No `data.py` was needed (see note above) and `result.py` (`Ok`/`Err`) was
 never started — fully deferred per "Explicitly out of scope for MVP", not
 partially built.
+
+Added after the MVP milestone: `parser.parse_all()` (parses any number of
+top-level statements, not just one — statements are self-delimiting, so no
+separator is needed even across a multi-line `|>` chain), `Kernel.run()`
+and a reworked `Kernel.eval_file()` (runs a script; a `.md`/`.markdown` path
+is read as fenced ```minimatic / ```mmt code blocks, each block a chunk of
+the script, run in document order against the same kernel — see
+`minimatic/markdown.py`), and a `python -m minimatic <path>` CLI mode that
+runs a file instead of opening the REPL. This makes "a Minimatic script can
+just be a Markdown document" a real, tested capability, not just a
+convention implied by the design docs' code-fenced examples.

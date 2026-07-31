@@ -52,6 +52,24 @@ def parse(source: str):
     return Parser(tokenize(source)).parse_program()
 
 
+def parse_all(source: str) -> list:
+    """
+    Parse zero or more top-level statements from `source`, in order.
+
+    Unlike `parse` (which requires exactly one statement followed by EOF),
+    this is what running a *script* needs: statements are self-delimiting
+    (each `parse_expr()` call naturally stops where the next one begins,
+    since the grammar has no implicit-application/juxtaposition case), so
+    no explicit separator between them is required — a multi-line
+    expression like a `|>` chain still parses as a single statement.
+    """
+    parser = Parser(tokenize(source))
+    statements = []
+    while not parser._at(TokenKind.EOF):
+        statements.append(parser.parse_expr())
+    return statements
+
+
 class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens

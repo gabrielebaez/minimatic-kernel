@@ -9,9 +9,12 @@ from pathlib import Path
 from .env import Env
 from .eval import Evaluator
 from .extend import register_head as _register_head
-from .parser import parse
+from .markdown import extract_minimatic_blocks
+from .parser import parse, parse_all
 from .prelude import register_prelude
 from .registry import Registry
+
+_MARKDOWN_SUFFIXES = (".md", ".markdown")
 
 
 class Kernel:
@@ -22,11 +25,37 @@ class Kernel:
         register_prelude(self.registry)
 
     def eval(self, source: str):
+        """Evaluate exactly one top-level statement."""
         tree = parse(source)
         return self.evaluator.eval(tree, self.global_env)
 
-    def eval_file(self, path: str):
-        return self.eval(Path(path).read_text())
+    def run(self, source: str) -> list:
+        """Evaluate every top-level statement in `source`, in order,
+        against this kernel's global environment, returning the list of
+        results. Unlike `eval`, `source` may hold any number of
+        statements — this is what running a *script* needs."""
+        return [self.evaluator.eval(stmt, self.global_env) for stmt in parse_all(source)]
+
+    def eval_file(self, path: str) -> list:
+        """
+        Run a Minimatic source file as a script, returning the list of
+        every top-level statement's result, in order.
+
+        A `.md`/`.markdown` file is treated as a Minimatic document: each
+        ```minimatic fenced code block (see `minimatic/markdown.py`) is
+        its own chunk of the script, run in document order against this
+        same kernel — later blocks see everything earlier blocks defined.
+        Any other extension is read as plain Minimatic source and run as
+        one script with no block boundaries.
+        """
+        p = Path(path)
+        text = p.read_text()
+        if p.suffix.lower() in _MARKDOWN_SUFFIXES:
+            results = []
+            for block in extract_minimatic_blocks(text):
+                results.extend(self.run(block))
+            return results
+        return self.run(text)
 
     def register_head(self, name: str, fn, attributes: tuple = (), pass_ctx: bool = False) -> None:
         _register_head(self.registry, name, fn, attributes=attributes, pass_ctx=pass_ctx)
