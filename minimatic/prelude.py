@@ -13,6 +13,7 @@ filter/reduce, string ops, the self-hosting derived prelude, ...).
 
 from __future__ import annotations
 
+from .ast.atoms import is_integer
 from .ast.expression import Expression
 from .ast.symbol import Symbol
 from .attributes import HoldAll, HoldFirst, HoldRest, Listable
@@ -70,6 +71,93 @@ def _impl_pipe(lhs_val, rhs_raw, ctx=None):
     else:
         raise MinimaticTypeError(f"right-hand side of '|>' must be callable, got {rhs_raw!r}")
     return ctx.eval(spliced)
+
+
+# ------------------------------------------------------------- control flow --
+#
+# `if`, `switch`, `which`, `for`, `each` are ordinary registered heads, not
+# special forms in the grammar (docs/the language.md §4: "There is no
+# control-flow construct in Minimatic that a register_head-registered
+# Python function couldn't, in principle, also define"). Branches are
+# skipped by *not evaluating* the unchosen argument expressions, using
+# each head's own hold behavior — never a hard-coded evaluator case.
+
+
+def _impl_if(cond, then_raw, else_raw, ctx=None):
+    # HoldRest: `cond` (index 0) is evaluated normally; `then`/`else`
+    # arrive raw so only the taken branch ever gets evaluated.
+    if not isinstance(cond, bool):
+        raise MinimaticTypeError(f"if: condition must be a bool, got {cond!r}")
+    return ctx.eval(then_raw if cond else else_raw)
+
+
+def _impl_switch(x_raw, *rest_raw, ctx=None):
+    """`switch(x, case1, result1, case2, result2, ..., [default])`.
+    HoldAll: nothing but `x` and the *matching* case/result pair is ever
+    evaluated — cases are evaluated one at a time as they're checked
+    (so a case can itself be a computed expression), results stay
+    unevaluated until the moment their case wins."""
+    x = ctx.eval(x_raw)
+    i = 0
+    while i + 1 < len(rest_raw):
+        case_val = ctx.eval(rest_raw[i])
+        if type(case_val) is type(x) and case_val == x:
+            return ctx.eval(rest_raw[i + 1])
+        i += 2
+    if i < len(rest_raw):  # trailing default, no case attached to it
+        return ctx.eval(rest_raw[i])
+    raise MinimaticTypeError(f"switch: no matching case for {x!r}")
+
+
+def _impl_which(*args_raw, ctx=None):
+    """`which(cond1, result1, cond2, result2, ..., [default])` — a plain
+    cond/elif chain. HoldAll: conditions are evaluated one at a time,
+    in order, until one is true; only the winning result is evaluated."""
+    i = 0
+    while i + 1 < len(args_raw):
+        cond = ctx.eval(args_raw[i])
+        if not isinstance(cond, bool):
+            raise MinimaticTypeError(f"which: condition must be a bool, got {cond!r}")
+        if cond:
+            return ctx.eval(args_raw[i + 1])
+        i += 2
+    if i < len(args_raw):
+        return ctx.eval(args_raw[i])
+    raise MinimaticTypeError("which: no condition matched and no default given")
+
+
+def _impl_for(list_expr, fn_value, ctx=None):
+    # No hold attributes: `list_expr`/`fn_value` are ordinary values,
+    # same convention as map/fold. Unlike map, the per-element results are
+    # discarded — `for`/`each` are for side effects, `map` is for
+    # transforming data; returns Null (Python None).
+    _check_list(list_expr, "for")
+    for item in list_expr.tail:
+        ctx.apply(fn_value, [item])
+    return None
+
+
+def _impl_each(list_expr, fn_value, ctx=None):
+    return _impl_for(list_expr, fn_value, ctx=ctx)
+
+
+def _impl_compound_expression(*args):
+    # `(stmt1; stmt2; ...)` — ordinary eager evaluation already runs every
+    # argument in order for effect (Python's list-comprehension arg
+    # evaluation in eval.py), so this just needs to keep the last value.
+    return args[-1] if args else None
+
+
+def _impl_print(value):
+    print(value)
+    return None
+
+
+def _impl_range(lo, hi):
+    # `a..b` -> [a, a+1, ..., b-1] (half-open, matches docs/the language.md §6.2)
+    if not (is_integer(lo) and is_integer(hi)):
+        raise MinimaticTypeError(f"Range: bounds must be integers, got {lo!r}, {hi!r}")
+    return Expression(Symbol("List"), *range(lo, hi))
 
 
 # ------------------------------------------------------------------ data --
@@ -189,6 +277,15 @@ def register_prelude(registry) -> None:
     register_head(registry, "Rule", _impl_rule, attributes=[HoldAll], pass_ctx=True)
     register_head(registry, "ReplaceAll", _impl_replace_all, attributes=[HoldRest], pass_ctx=True)
     register_head(registry, "__pipe__", _impl_pipe, attributes=[HoldRest], pass_ctx=True)
+
+    register_head(registry, "if", _impl_if, attributes=[HoldRest], pass_ctx=True)
+    register_head(registry, "switch", _impl_switch, attributes=[HoldAll], pass_ctx=True)
+    register_head(registry, "which", _impl_which, attributes=[HoldAll], pass_ctx=True)
+    register_head(registry, "for", _impl_for, pass_ctx=True)
+    register_head(registry, "each", _impl_each, pass_ctx=True)
+    register_head(registry, "CompoundExpression", _impl_compound_expression)
+    register_head(registry, "print", _impl_print)
+    register_head(registry, "Range", _impl_range)
 
     register_head(registry, "List", _impl_list)
     register_head(registry, "length", _impl_length)

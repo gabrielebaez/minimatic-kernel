@@ -739,3 +739,42 @@ the script, run in document order against the same kernel — see
 runs a file instead of opening the REPL. This makes "a Minimatic script can
 just be a Markdown document" a real, tested capability, not just a
 convention implied by the design docs' code-fenced examples.
+
+### Control flow (`if`, `switch`, `which`, `for`, `each`, `;`)
+
+Implemented as ordinary registered heads, per `docs/the language.md` §4's
+explicit design goal — no hard-coded `if`/`switch` case in the evaluator.
+Branches are skipped by *not evaluating* the unchosen argument, via each
+head's own Hold attributes (`if`/`Range` etc. use the exact same mechanism
+`Lambda`/`SetDelayed` already use):
+
+- `if(cond, then, else)` — `HoldRest`; `switch`/`which` are `HoldAll` and
+  evaluate their own cases/conditions one at a time via `ctx.eval`, so
+  only the winning branch and the cases/conditions actually checked ever
+  run.
+- `for(list, fn)` / `each(list, fn)` — apply `fn` to every element for
+  effect and return `Null` (`None`), unlike `map` which collects results.
+- `Range` (`a..b` sugar) — half-open, `0..5` → `[0,1,2,3,4]`, per
+  `docs/the language.md` §6.2. Required adding a `..` precedence level to
+  the parser (between comparison and additive).
+- `(stmt1; stmt2; ...)` desugars to `CompoundExpression`, parsed only
+  inside parens (matching the one place the design docs show it). No
+  special evaluation needed: ordinary left-to-right argument evaluation
+  already runs each statement in order for effect; the builtin just keeps
+  the last value.
+- `print(value)` — the minimum needed to make any of the above
+  observable; returns `Null`.
+
+**Two bugs found and fixed while wiring this up, both now covered by
+tests:**
+1. `Kernel.run`/`eval_file` returned a fully-materialized list, so the CLI
+   only started echoing results *after* the whole file had already run —
+   any `print` side effects fired before any echoed result, scrambling
+   output order relative to the source. Fixed by adding generator
+   variants (`run_iter`, `eval_file_iter`) that yield each result the
+   instant it's produced; the CLI uses those, `run`/`eval_file` still
+   return plain lists for embedding use.
+2. The CLI/REPL now skip echoing `Null` (`None`) results (matching how a
+   Python REPL doesn't echo `None`) — otherwise every `print(...)` call
+   would visibly double-print its value once from the side effect and
+   once from the echoed return value.

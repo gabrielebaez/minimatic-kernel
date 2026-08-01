@@ -34,7 +34,8 @@ See [`docs/learn_minimatic_in_15_minutes.md`](docs/learn_minimatic_in_15_minutes
 for a full language tour, or run [`examples/tour.md`](examples/tour.md) —
 a Markdown document that's also a runnable demo of everything implemented
 so far (specificity dispatch, recursion via literal clauses, sequence
-blanks, `Listable` threading, `/.` rewriting, closures, and `|>`):
+blanks, `Listable` threading, `/.` rewriting, closures, `|>`, and control
+flow — `if`/`switch`/`which`/`for`/`each`/`;`):
 
 ```bash
 python -m minimatic examples/tour.md
@@ -81,6 +82,7 @@ correctly through `python -m minimatic`. Roughly, in order of maturity:
 | `Hold` / `ReleaseHold` / rewrite rules (`->`, `:>`, `/.`) | `/.` over evaluated data only; `Hold`/`ReleaseHold`/`:>` design stage |
 | `Attributes` (`Flat`, `Orderless`, `HoldAll`, `Listable`, ...) | `HoldAll`/`HoldFirst`/`HoldRest`/`Listable` working (MVP); `Flat`/`Orderless` design stage |
 | `Ok`/`Err` result pipelines (`catch`, `recover`, `finally`) | design stage |
+| Control flow (`if`, `switch`, `which`, `for`, `each`, `;`) | working (MVP) — ordinary heads, no special-form syntax |
 | Python extension API (`register_head`) | working (MVP), signature simplified — see below |
 | Performance / benchmarking | not started |
 

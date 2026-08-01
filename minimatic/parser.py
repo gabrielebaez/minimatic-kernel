@@ -187,11 +187,21 @@ class Parser:
     # -- level 4: comparison -----------------------------------------------
 
     def parse_comparison(self):
-        left = self.parse_additive()
+        left = self.parse_range()
         while self._peek().kind in _COMPARISON_OPS:
             op = _COMPARISON_OPS[self._advance().kind]
-            right = self.parse_additive()
+            right = self.parse_range()
             left = Expression(symbol(op), left, right)
+        return left
+
+    # -- level 4.5: range (`..`, half-open: `0..5` -> [0,1,2,3,4]) -----------
+
+    def parse_range(self):
+        left = self.parse_additive()
+        if self._at(TokenKind.RANGE):
+            self._advance()
+            right = self.parse_additive()
+            return Expression(symbol("Range"), left, right)
         return left
 
     # -- level 5: additive ---------------------------------------------------
@@ -282,9 +292,20 @@ class Parser:
 
         if tok.kind is TokenKind.LPAREN:
             self._advance()
-            inner = self.parse_pipe()
+            first = self.parse_pipe()
+            if self._at(TokenKind.SEMICOLON):
+                # `(stmt1; stmt2; ...)` -> CompoundExpression: evaluate each
+                # in order for effect, the value is the last one.
+                exprs = [first]
+                while self._at(TokenKind.SEMICOLON):
+                    self._advance()
+                    if self._at(TokenKind.RPAREN):
+                        break  # trailing semicolon allowed
+                    exprs.append(self.parse_pipe())
+                self._expect(TokenKind.RPAREN)
+                return Expression(symbol("CompoundExpression"), *exprs)
             self._expect(TokenKind.RPAREN)
-            return inner
+            return first
 
         if tok.kind is TokenKind.LBRACKET:
             return self.parse_list_literal()

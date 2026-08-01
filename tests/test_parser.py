@@ -126,3 +126,29 @@ def test_replace_all_with_pattern_bind():
         PatternBind("x", Blank(None)),
         Expression(Symbol("power"), Symbol("x"), 2),
     )
+
+
+def test_range_desugaring():
+    assert parse("0 .. 5") == Expression(Symbol("Range"), 0, 5)
+
+
+def test_range_binds_looser_than_additive():
+    assert parse("0 .. 2 + 3") == Expression(Symbol("Range"), 0, Expression(Symbol("plus"), 2, 3))
+
+
+def test_compound_expression_desugaring():
+    tree = parse('(print("Hello"); print("World"))')
+    assert tree == Expression(
+        Symbol("CompoundExpression"),
+        Expression(Symbol("print"), "Hello"),
+        Expression(Symbol("print"), "World"),
+    )
+
+
+def test_compound_expression_allows_trailing_semicolon():
+    tree = parse("(1; 2;)")
+    assert tree == Expression(Symbol("CompoundExpression"), 1, 2)
+
+
+def test_single_parenthesized_expr_is_not_wrapped():
+    assert parse("(1 + 2)") == Expression(Symbol("plus"), 1, 2)

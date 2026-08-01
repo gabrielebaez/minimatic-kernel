@@ -29,12 +29,35 @@ class Kernel:
         tree = parse(source)
         return self.evaluator.eval(tree, self.global_env)
 
+    def run_iter(self, source: str):
+        """Like `run`, but a generator: yields each statement's result as
+        soon as it's produced, instead of collecting them into a list
+        first. This is what lets a caller (e.g. the CLI) interleave
+        printing a result with whatever side effects (`print`, `for`,
+        `each`, ...) that same statement or a later one causes — with
+        `run`'s all-at-once list, every side effect from the *whole*
+        script fires before any result gets echoed, badly scrambling
+        output order."""
+        for stmt in parse_all(source):
+            yield self.evaluator.eval(stmt, self.global_env)
+
     def run(self, source: str) -> list:
         """Evaluate every top-level statement in `source`, in order,
         against this kernel's global environment, returning the list of
         results. Unlike `eval`, `source` may hold any number of
         statements — this is what running a *script* needs."""
-        return [self.evaluator.eval(stmt, self.global_env) for stmt in parse_all(source)]
+        return list(self.run_iter(source))
+
+    def eval_file_iter(self, path: str):
+        """Generator version of `eval_file` — see `run_iter` for why this
+        matters (output-order interleaving with side effects)."""
+        p = Path(path)
+        text = p.read_text()
+        if p.suffix.lower() in _MARKDOWN_SUFFIXES:
+            for block in extract_minimatic_blocks(text):
+                yield from self.run_iter(block)
+        else:
+            yield from self.run_iter(text)
 
     def eval_file(self, path: str) -> list:
         """
@@ -48,14 +71,7 @@ class Kernel:
         Any other extension is read as plain Minimatic source and run as
         one script with no block boundaries.
         """
-        p = Path(path)
-        text = p.read_text()
-        if p.suffix.lower() in _MARKDOWN_SUFFIXES:
-            results = []
-            for block in extract_minimatic_blocks(text):
-                results.extend(self.run(block))
-            return results
-        return self.run(text)
+        return list(self.eval_file_iter(path))
 
     def register_head(self, name: str, fn, attributes: tuple = (), pass_ctx: bool = False) -> None:
         _register_head(self.registry, name, fn, attributes=attributes, pass_ctx=pass_ctx)

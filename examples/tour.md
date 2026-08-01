@@ -134,6 +134,53 @@ xs |> tail
 xs |> append(40)
 ```
 
+## Control flow is ordinary functions, not special syntax
+
+`if`, `switch`, `which`, `for`, and `each` are registered heads like any
+other — branches are skipped by *not evaluating* the unchosen argument,
+following each head's own hold attributes, the same mechanism `Lambda`
+and `SetDelayed` already use. There's no `if`/`switch` case hard-coded
+into the evaluator.
+
+```minimatic
+if(3 < 5, "yes", 1 / 0)
+```
+
+The `1 / 0` above is never evaluated — `if` is `HoldRest`, so only the
+taken branch is looked at. Same story for `switch` (evaluates cases one at
+a time until one matches, then evaluates only that result) and `which` (a
+plain cond/elif chain):
+
+```minimatic
+grade(score: _int) := switch(True,
+    score >= 90, "A",
+    score >= 80, "B",
+    score >= 70, "C",
+    "F")
+
+grade(95)
+grade(72)
+grade(40)
+```
+
+`for`/`each` apply a function to every element of a list for effect and
+return `Null` (unlike `map`, they don't collect the results) — `0..5` is
+`Range`, sugar for the half-open list `[0, 1, 2, 3, 4]`:
+
+```minimatic
+for(0 .. 5, y -> print(y))
+```
+
+And `(stmt1; stmt2; ...)` sequences expressions for effect, evaluating to
+the last one — this is what lets a function body run more than one
+statement:
+
+```minimatic
+greet() := (print("Hello"); print("World"))
+
+greet()
+```
+
 ---
 
 This is all MVP-stage behavior — see `IMPLEMENTATION_PLAN.md` and the

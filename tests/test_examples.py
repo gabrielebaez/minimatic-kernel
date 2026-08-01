@@ -21,7 +21,7 @@ def _list(*items):
 def test_tour_runs_without_error_and_produces_expected_results(kernel):
     results = kernel.eval_file(str(TOUR_PATH))
 
-    assert len(results) == 35
+    assert len(results) == 43
 
     # describe(5), describe("hi"), describe(3.14) — after 3 SetDelayed clauses
     assert results[3] == "an integer"
@@ -63,3 +63,13 @@ def test_tour_runs_without_error_and_produces_expected_results(kernel):
     assert results[32] == 10
     assert results[33] == _list(20, 30)
     assert results[34] == _list(10, 20, 30, 40)
+
+    # control-flow section: if, grade (switch-based), for, greet (CompoundExpression)
+    assert results[35] == "yes"
+    assert results[36] == Symbol("grade")
+    assert results[37] == "A"
+    assert results[38] == "C"
+    assert results[39] == "F"
+    assert results[40] is None  # for(0..5, y -> print(y))
+    assert results[41] == Symbol("greet")
+    assert results[42] is None  # greet() -> CompoundExpression's last stmt is print(...)

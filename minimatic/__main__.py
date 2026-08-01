@@ -15,11 +15,23 @@ from .errors import MinimaticError
 from .kernel import Kernel
 
 
+def _echo(result) -> None:
+    # Null (None) results — from `print`, `for`/`each`, etc. — aren't
+    # echoed, the same way a Python REPL doesn't print `None`. The value
+    # returned to Python callers (Kernel.run/eval_file) is unaffected;
+    # this only governs what the CLI displays.
+    if result is not None:
+        print(result)
+
+
 def run_file(path: str) -> None:
     kernel = Kernel()
     try:
-        for result in kernel.eval_file(path):
-            print(result)
+        # eval_file_iter, not eval_file: yields each result as it's
+        # produced so it's echoed right where it happens, interleaved with
+        # any print()/for/each side effects — not batched after the fact.
+        for result in kernel.eval_file_iter(path):
+            _echo(result)
     except MinimaticError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -38,7 +50,7 @@ def repl() -> None:
             continue
         try:
             result = kernel.eval(source)
-            print(result)
+            _echo(result)
         except MinimaticError as e:
             print(f"Error: {e}")
 
