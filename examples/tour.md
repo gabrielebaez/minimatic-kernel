@@ -181,6 +181,33 @@ greet() := (print("Hello"); print("World"))
 greet()
 ```
 
+## `//` and `/@`: the Wolfram spellings
+
+Two operators come straight from the Wolfram Language. `//` is postfix
+application — `a // f` is `f(a)` — which in Minimatic is `|>` under
+another name: the same head, the same first-position argument splicing,
+the same precedence, so the two chain together freely.
+
+```minimatic
+[1, 2, 3] // length
+[1, 2, 3] // append(4)
+5 // (x -> x * 2)
+[1, 2, 3, 4] |> map(x -> x * x) // fold(plus, 0)
+```
+
+`/@` is `map`, written function-first: `f /@ xs` is `map(xs, f)`. It binds
+tighter than arithmetic and is right-associative, so `f /@ g /@ xs` runs
+`g` first.
+
+```minimatic
+triple(x: _int) := 3 * x
+inc(x: _int) := x + 1
+
+triple /@ [1, 2, 3]
+triple /@ inc /@ [1, 2, 3]
+triple /@ [1, 2, 3] // fold(plus, 0)
+```
+
 ---
 
 This is all MVP-stage behavior — see `IMPLEMENTATION_PLAN.md` and the

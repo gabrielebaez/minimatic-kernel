@@ -369,6 +369,17 @@ examples for exactly that reason — it reads in the order operations
 happen, left to right, which head-first nested calls (`f(g(h(x)))`)
 do not.
 
+`//`, borrowed from the Wolfram Language, is a second spelling of the same
+operator: `a // f` desugars identically to `a |> f`, splices multi-argument
+forms into first position the same way, and sits at the same precedence, so
+the two mix freely in one chain (`5 |> sqrt // str`). It exists for
+familiarity, not as a distinct construct — there is one postfix-application
+operator in Minimatic, with two ways to write it.
+
+The other Wolfram operator Minimatic adopts is `/@`: `f /@ xs` is `map(xs, f)`,
+written function-first. It binds tighter than arithmetic and is
+right-associative, so `f /@ g /@ xs` applies `g` first.
+
 ## 14. Extending the language from Python
 
 ```python

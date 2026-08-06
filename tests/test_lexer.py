@@ -28,17 +28,35 @@ def test_booleans():
 
 
 def test_multi_char_operators_maximal_munch():
-    assert kinds(":= -> :> /. |> == != <= >= ..") == [
+    assert kinds(":= -> :> /. // /@ |> == != <= >= ..") == [
         TokenKind.DEFINE,
         TokenKind.ARROW,
         TokenKind.DELAYED_ARROW,
         TokenKind.REPLACE,
+        TokenKind.POSTFIX,
+        TokenKind.MAP,
         TokenKind.PIPE,
         TokenKind.EQ,
         TokenKind.NEQ,
         TokenKind.LTE,
         TokenKind.GTE,
         TokenKind.RANGE,
+        TokenKind.EOF,
+    ]
+
+
+def test_slash_operators_do_not_swallow_a_bare_divide():
+    # `/` stays a plain SLASH; only `/.`, `//`, `/@` are two-character ops.
+    assert kinds("a / b // c /@ d /. e") == [
+        TokenKind.IDENT,
+        TokenKind.SLASH,
+        TokenKind.IDENT,
+        TokenKind.POSTFIX,
+        TokenKind.IDENT,
+        TokenKind.MAP,
+        TokenKind.IDENT,
+        TokenKind.REPLACE,
+        TokenKind.IDENT,
         TokenKind.EOF,
     ]
 

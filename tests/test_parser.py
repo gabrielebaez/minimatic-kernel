@@ -26,6 +26,45 @@ def test_pipe_desugaring_left_assoc():
     )
 
 
+def test_postfix_apply_desugars_to_the_same_head_as_pipe():
+    assert parse("5 // sqrt") == parse("5 |> sqrt")
+    assert parse("x // f(1, 2)") == Expression(
+        Symbol("__pipe__"), Symbol("x"), Expression(Symbol("f"), 1, 2)
+    )
+
+
+def test_postfix_apply_is_left_assoc_and_mixes_with_pipe():
+    assert parse("5 // sqrt // str") == Expression(
+        Symbol("__pipe__"),
+        Expression(Symbol("__pipe__"), 5, Symbol("sqrt")),
+        Symbol("str"),
+    )
+    assert parse("5 |> sqrt // str") == parse("5 // sqrt |> str")
+
+
+def test_map_operator_desugars_to_list_first_map():
+    # written function-first (Wolfram order), desugared list-first
+    assert parse("double /@ xs") == Expression(Symbol("map"), Symbol("xs"), Symbol("double"))
+    assert parse("double /@ [1, 2, 3]") == Expression(
+        Symbol("map"), Expression(Symbol("List"), 1, 2, 3), Symbol("double")
+    )
+
+
+def test_map_operator_is_right_assoc():
+    assert parse("f /@ g /@ xs") == Expression(
+        Symbol("map"), Expression(Symbol("map"), Symbol("xs"), Symbol("g")), Symbol("f")
+    )
+
+
+def test_map_operator_binds_tighter_than_arithmetic_looser_than_power():
+    assert parse("f /@ xs * 2") == Expression(
+        Symbol("times"), Expression(Symbol("map"), Symbol("xs"), Symbol("f")), 2
+    )
+    assert parse("f /@ x ^ 2") == Expression(
+        Symbol("map"), Expression(Symbol("power"), Symbol("x"), 2), Symbol("f")
+    )
+
+
 def test_list_literal():
     assert parse("[1, 2, 3]") == Expression(Symbol("List"), 1, 2, 3)
     assert parse("[]") == Expression(Symbol("List"))

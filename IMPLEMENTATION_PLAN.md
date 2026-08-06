@@ -204,11 +204,12 @@ Iterative character scanner, no external lexer generator.
 
 | Level | Operators |
 |---|---|
-| 1 | `\|>` (pipe, left-assoc) |
+| 1 | `\|>`, `//` (postfix apply, left-assoc) |
 | 2 | `->` and `:>` (rule arrows, right-assoc) |
 | 3 | `==`, `!=`, `<`, `>`, `<=`, `>=` |
 | 4 | `+`, `-` |
 | 5 | `*`, `/`, `%` |
+| 5.5 | `/@` (map, right-assoc) |
 | 6 | `^` (right-assoc) |
 | 7 | Unary `-`, `!` |
 | 8 | Function call, indexing, postfix `&` |
@@ -222,6 +223,8 @@ Iterative character scanner, no external lexer generator.
 | `{ "a" -> 1 }` | `Expression(Symbol("Dict"), Expression(Symbol("Rule"), "a", 1))` |
 | `x -> x * 2` | `Expression(Symbol("Lambda"), params, body)` |
 | `a \|> f` | `Expression(Symbol("__pipe__"), a, f)` |
+| `a // f` | `Expression(Symbol("__pipe__"), a, f)` |
+| `f /@ xs` | `Expression(Symbol("map"), xs, f)` |
 | `f(x: _int) := ...` | `Expression(Symbol("Define"), pattern, body)` |
 | `expr /. rule` | `Expression(Symbol("ReplaceAll"), expr, rule)` |
 

@@ -7,9 +7,17 @@ of Symbol / atom / Expression / pattern nodes with all surface sugar
 desugared, per the tables in IMPLEMENTATION_PLAN.md.
 
 Precedence, low to high:
-    pipe (|>)  >  arrow (->, :>)  >  replace (/.)  >  comparison
-    >  additive  >  multiplicative  >  power (^, right-assoc)
-    >  unary (-)  >  call  >  primary
+    pipe (|>, //)  >  arrow (->, :>)  >  replace (/.)  >  comparison
+    >  additive  >  multiplicative  >  map (/@, right-assoc)
+    >  power (^, right-assoc)  >  unary (-)  >  call  >  primary
+
+The two Wolfram-inherited operators sit at the levels their Wolfram
+counterparts do relative to the rest of the grammar: `//` (postfix
+application) binds loosest, alongside `|>` — which it is a spelling of,
+down to the same `__pipe__` desugaring, so `a // f(b)` splices `a` into
+first position exactly like `a |> f(b)`. `/@` (map) binds tighter than
+arithmetic and looser than `^`, so `f /@ xs * 2` is `(f /@ xs) * 2` and
+`f /@ g /@ xs` is `f /@ (g /@ xs)`.
 
 `/.` gets its own dedicated rule sub-grammar (parse_single_rule /
 parse_rule_rhs) rather than reusing the general arrow parser, because a
@@ -122,11 +130,11 @@ class Parser:
             return Expression(symbol("SetDelayed"), left, rhs)
         return left
 
-    # -- level 1: pipe (left-assoc) ---------------------------------------
+    # -- level 1: pipe (|>, //) (left-assoc) -------------------------------
 
     def parse_pipe(self):
         left = self.parse_arrow()
-        while self._at(TokenKind.PIPE):
+        while self._at(TokenKind.PIPE) or self._at(TokenKind.POSTFIX):
             self._advance()
             right = self.parse_arrow()
             left = Expression(symbol("__pipe__"), left, right)
@@ -217,11 +225,27 @@ class Parser:
     # -- level 6: multiplicative ----------------------------------------------
 
     def parse_multiplicative(self):
-        left = self.parse_power()
+        left = self.parse_map()
         while self._peek().kind in _MULTIPLICATIVE_OPS:
             op = _MULTIPLICATIVE_OPS[self._advance().kind]
-            right = self.parse_power()
+            right = self.parse_map()
             left = Expression(symbol(op), left, right)
+        return left
+
+    # -- level 6.5: map (/@, right-assoc) --------------------------------------
+
+    def parse_map(self):
+        """`f /@ xs` -> `map(xs, f)`.
+
+        Written function-first (Wolfram's `Map[f, xs]` order), desugared
+        into the prelude's list-first `map` — so `f /@ xs` and
+        `xs |> map(f)` produce the identical tree, and `/@` stays a pure
+        spelling of `map` rather than a second implementation of it."""
+        left = self.parse_power()
+        if self._at(TokenKind.MAP):
+            self._advance()
+            right = self.parse_map()  # right-assoc: `f /@ g /@ xs`
+            return Expression(symbol("map"), right, left)
         return left
 
     # -- level 7: power (right-assoc) ------------------------------------------

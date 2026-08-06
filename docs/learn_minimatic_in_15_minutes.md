@@ -24,6 +24,7 @@ plus(2, times(4, 2))    (* 10 -- nesting       *)
 
 (* The pipe operator reads left-to-right *)
 5 |> sqrt |> str           (* "2.236..." *)
+5 // sqrt // str           (* same thing -- `//` is a spelling of `|>` *)
 
 
 (* ============================================ *)

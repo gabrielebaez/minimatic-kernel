@@ -63,13 +63,23 @@ def _impl_pipe(lhs_val, rhs_raw, ctx=None):
     `f(a, b, c)` (fixed first-position, per IMPLEMENTATION_PLAN.md's locked
     decision). `rhs_raw` arrives unevaluated (HoldRest) specifically so we
     can splice `lhs_val` into the call *before* dispatch runs, rather than
-    evaluating the call first and trying to combine results after."""
+    evaluating the call first and trying to combine results after.
+
+    Wolfram's postfix `//` parses to this same head: `a // f` is `a |> f`,
+    argument splicing included."""
+    if isinstance(rhs_raw, Expression) and rhs_raw.head == Symbol("Lambda"):
+        # `a |> (x -> ...)` / `a // (x -> ...)`: the right side *is* the
+        # function, not a call to splice an argument into — evaluate it to
+        # a Closure and apply that to `a`.
+        return ctx.apply(ctx.eval(rhs_raw), [lhs_val])
     if isinstance(rhs_raw, Expression):
         spliced = Expression(rhs_raw.head, lhs_val, *rhs_raw.tail)
     elif isinstance(rhs_raw, Symbol):
         spliced = Expression(rhs_raw, lhs_val)
     else:
-        raise MinimaticTypeError(f"right-hand side of '|>' must be callable, got {rhs_raw!r}")
+        raise MinimaticTypeError(
+            f"right-hand side of '|>' / '//' must be callable, got {rhs_raw!r}"
+        )
     return ctx.eval(spliced)
 
 

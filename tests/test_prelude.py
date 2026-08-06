@@ -68,6 +68,59 @@ def test_flagship_example_pipeline(kernel):
     assert result == 9
 
 
+# ------------------------------------------- postfix apply (//) and map (/@) --
+
+
+def test_postfix_apply_is_pipe(kernel):
+    assert kernel.eval("[1, 2, 3] // length") == 3
+    assert kernel.eval("[1, 2, 3] // append(4)") == Expression(Symbol("List"), 1, 2, 3, 4)
+    assert kernel.eval("[1, 2, 3, 4] // fold(plus, 0)") == 10
+
+
+def test_postfix_apply_chains_and_mixes_with_pipe(kernel):
+    kernel.eval("double(x: _int) := 2 * x")
+    assert kernel.eval("5 // double // double") == 20
+    assert kernel.eval("[1, 2, 3] |> map(double) // fold(plus, 0)") == 12
+
+
+def test_pipe_and_postfix_apply_accept_a_parenthesized_lambda(kernel):
+    assert kernel.eval("5 // (x -> x * 2)") == 10
+    assert kernel.eval("5 |> (x -> x * 2)") == 10
+
+
+def test_postfix_apply_rejects_a_non_callable_right_side(kernel):
+    from minimatic.errors import MinimaticTypeError
+
+    with pytest.raises(MinimaticTypeError):
+        kernel.eval("[1, 2] // 5")
+
+
+def test_map_operator_over_a_named_head_and_a_lambda(kernel):
+    kernel.eval("double(x: _int) := 2 * x")
+    assert kernel.eval("double /@ [1, 2, 3]") == Expression(Symbol("List"), 2, 4, 6)
+    assert kernel.eval("(x -> x * 2) /@ [1, 2, 3]") == Expression(Symbol("List"), 2, 4, 6)
+
+
+def test_map_operator_matches_the_pipe_form(kernel):
+    kernel.eval("double(x: _int) := 2 * x")
+    assert kernel.eval("double /@ [1, 2, 3]") == kernel.eval("[1, 2, 3] |> map(double)")
+
+
+def test_map_operator_composes_with_the_other_new_operators(kernel):
+    kernel.eval("double(x: _int) := 2 * x")
+    kernel.eval("inc(x: _int) := x + 1")
+    # right-assoc: inc runs first, then double
+    assert kernel.eval("double /@ inc /@ [1, 2, 3]") == Expression(Symbol("List"), 4, 6, 8)
+    assert kernel.eval("double /@ [1, 2, 3] // fold(plus, 0)") == 12
+
+
+def test_map_operator_rejects_a_non_list_right_side(kernel):
+    from minimatic.errors import MinimaticTypeError
+
+    with pytest.raises(MinimaticTypeError):
+        kernel.eval("plus /@ 5")
+
+
 # --------------------------------------------------------- control flow --
 
 

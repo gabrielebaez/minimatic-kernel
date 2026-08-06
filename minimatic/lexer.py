@@ -40,6 +40,8 @@ class TokenKind(Enum):
     DELAYED_ARROW = auto()  # :>
     REPLACE = auto()  # /.
     PIPE = auto()  # |>
+    POSTFIX = auto()  # //
+    MAP = auto()  # /@
     RANGE = auto()  # ..
     AMP = auto()  # &
 
@@ -82,6 +84,8 @@ _MULTI_CHAR_OPS: list[tuple[str, TokenKind]] = [
     ("->", TokenKind.ARROW),
     (":>", TokenKind.DELAYED_ARROW),
     ("/.", TokenKind.REPLACE),
+    ("//", TokenKind.POSTFIX),
+    ("/@", TokenKind.MAP),
     ("|>", TokenKind.PIPE),
     ("..", TokenKind.RANGE),
     ("==", TokenKind.EQ),

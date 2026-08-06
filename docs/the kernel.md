@@ -77,6 +77,8 @@ All surface syntax desugars into this before evaluation ever runs:
 | `{ "a" -> 1 }` | `Expr(Symbol("Dict"), (Expr(Symbol("Rule"), (Literal("a"), Literal(1))),))` |
 | `x -> x * 2` | `Expr(Symbol("Lambda"), (params, body))` |
 | `a \|> f` | `Expr(Symbol("__pipe__"), (a, f))` |
+| `a // f` | `Expr(Symbol("__pipe__"), (a, f))` — `//` is a spelling of `\|>` |
+| `f /@ xs` | `Expr(Symbol("map"), (xs, f))` — function-first surface, list-first head |
 
 ### 2.3 Values are just un-reduced-further expressions
 

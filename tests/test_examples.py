@@ -21,7 +21,7 @@ def _list(*items):
 def test_tour_runs_without_error_and_produces_expected_results(kernel):
     results = kernel.eval_file(str(TOUR_PATH))
 
-    assert len(results) == 43
+    assert len(results) == 52
 
     # describe(5), describe("hi"), describe(3.14) — after 3 SetDelayed clauses
     assert results[3] == "an integer"
@@ -73,3 +73,14 @@ def test_tour_runs_without_error_and_produces_expected_results(kernel):
     assert results[40] is None  # for(0..5, y -> print(y))
     assert results[41] == Symbol("greet")
     assert results[42] is None  # greet() -> CompoundExpression's last stmt is print(...)
+
+    # `//` (postfix apply) section
+    assert results[43] == 3
+    assert results[44] == _list(1, 2, 3, 4)
+    assert results[45] == 10
+    assert results[46] == 30
+
+    # `/@` (map) section — after 2 SetDelayed clauses
+    assert results[49] == _list(3, 6, 9)
+    assert results[50] == _list(6, 9, 12)  # right-assoc: inc first, then triple
+    assert results[51] == 18
