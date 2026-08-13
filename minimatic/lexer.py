@@ -44,6 +44,7 @@ class TokenKind(Enum):
     MAP = auto()  # /@
     RANGE = auto()  # ..
     AMP = auto()  # &
+    DOLLAR = auto()  # $ — the pipe's placeholder (a |> f($, b))
 
     LPAREN = auto()
     RPAREN = auto()
@@ -106,6 +107,7 @@ _SINGLE_CHAR_OPS: dict[str, TokenKind] = {
     "^": TokenKind.CARET,
     "%": TokenKind.PERCENT,
     "&": TokenKind.AMP,
+    "$": TokenKind.DOLLAR,
     "(": TokenKind.LPAREN,
     ")": TokenKind.RPAREN,
     "[": TokenKind.LBRACKET,

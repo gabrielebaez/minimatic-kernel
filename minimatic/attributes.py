@@ -3,17 +3,24 @@ Attributes - Evaluation attribute symbols.
 
 Attributes modify how expressions are evaluated. They control:
     - Argument evaluation (Hold attributes)
-    - Structural transformations (Flat, Orderless)
+    - Structural transformations (Listable)
     - Protection from modification
     - Numeric behavior
 
 All attributes are Symbols, created at module load time.
 
+Note: `Flat` and `Orderless` are deliberately absent — they were removed
+from the language by docs/proposal-001-dispatch-results-and-pipes.md §2.3.
+Their only real payoff is pattern matching over arithmetic trees, which
+belongs to the deferred symbolic-rewriting layer; variadic arity and
+ordinary evaluation of `1 + 2 + 3` never depended on them. Do not
+reintroduce either without revisiting that decision.
+
 Usage:
-    from minimatic.ast.attributes import HoldAll, Flat, Orderless
+    from minimatic.attributes import HoldAll, Listable
 
     # Attributes belong to heads in the registry, not on individual expressions.
-    # The evaluator consults the registry to determine hold/flat/orderless behavior.
+    # The evaluator consults the registry to determine hold/threading behavior.
     registry.attributes["MyMacro"] = {HoldAll}
 """
 
@@ -89,24 +96,6 @@ Example:
 
 # STRUCTURAL ATTRIBUTES
 
-Flat = Symbol("Flat")
-"""
-Associative — nested expressions with the same head are flattened.
-
-Example:
-    Plus has Flat, so Plus[Plus[a, b], c] → Plus[a, b, c]
-"""
-
-Orderless = Symbol("Orderless")
-"""
-Commutative — arguments are automatically sorted into canonical order.
-
-Example:
-    Plus has Orderless, so Plus[c, a, b] → Plus[a, b, c]
-
-Sorting uses a canonical ordering: numbers < symbols < expressions.
-"""
-
 OneIdentity = Symbol("OneIdentity")
 """
 A single-argument expression equals its argument for pattern matching.
@@ -150,8 +139,6 @@ the package that defines it.
 
 STRUCTURAL_ATTRIBUTES = frozenset(
     {
-        Flat,
-        Orderless,
         OneIdentity,
         Listable,
     }
@@ -206,16 +193,6 @@ def is_attribute(sym: Symbol) -> bool:
 def holds_all(attrs: frozenset[Symbol]) -> bool:
     """Check if attributes indicate all arguments should be held."""
     return bool(attrs & {Hold, HoldAll, HoldAllComplete})
-
-
-def is_flat(attrs: frozenset[Symbol]) -> bool:
-    """Check if Flat attribute is set."""
-    return Flat in attrs
-
-
-def is_orderless(attrs: frozenset[Symbol]) -> bool:
-    """Check if Orderless attribute is set."""
-    return Orderless in attrs
 
 
 def is_listable(attrs: frozenset[Symbol]) -> bool:

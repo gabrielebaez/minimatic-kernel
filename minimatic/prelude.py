@@ -7,8 +7,10 @@ Split into two groups:
     They need `ctx` (env / evaluator access) to do their job.
   - Ordinary data/arithmetic heads: plain Python functions, no ctx needed.
 
-See IMPLEMENTATION_PLAN.md for what's deferred (Flat/Orderless, Dict,
-filter/reduce, string ops, the self-hosting derived prelude, ...).
+See IMPLEMENTATION_PLAN.md for what's deferred (Dict, filter/reduce,
+string ops, the self-hosting derived prelude, ...). `Flat`/`Orderless`
+are not deferred but removed outright — see
+docs/proposal-001-dispatch-results-and-pipes.md §2.3.
 """
 
 from __future__ import annotations
@@ -58,21 +60,76 @@ def _impl_replace_all(value, rule_expr, ctx=None):
     return replace_all(value, rules, ctx)
 
 
+_DOLLAR = Symbol("$")
+_PIPE = Symbol("__pipe__")
+
+
+def _substitute_dollar(node, value):
+    """Replace every free `$` in `node` with `value`. Returns (node, found).
+
+    `found` is what tells `_impl_pipe` which of the two pipe forms it is
+    looking at, so it has to be exact: it is True only if a `$` was
+    actually replaced.
+
+    Substitution reaches any depth — including into a nested Lambda's body,
+    so `xs |> zip_with(ys, (a, b) -> f(a, b, $))` sees the piped subject.
+    The one exception is a nested `__pipe__`'s right-hand side: that `$`
+    belongs to the inner pipe and is resolved when the inner pipe evaluates
+    (proposal-001 §2.8 rule 4). The inner pipe's left-hand side is ordinary
+    ground and is substituted normally.
+    """
+    if isinstance(node, Symbol):
+        return (value, True) if node == _DOLLAR else (node, False)
+
+    if not isinstance(node, Expression):
+        return node, False
+
+    if node.head == _PIPE and len(node.tail) == 2:
+        inner_lhs, found = _substitute_dollar(node.tail[0], value)
+        if not found:
+            return node, False
+        return Expression(node.head, inner_lhs, node.tail[1]), True
+
+    new_head, found = _substitute_dollar(node.head, value)
+    new_args = []
+    for arg in node.tail:
+        new_arg, arg_found = _substitute_dollar(arg, value)
+        found = found or arg_found
+        new_args.append(new_arg)
+    if not found:
+        return node, False
+    return Expression(new_head, *new_args), True
+
+
 def _impl_pipe(lhs_val, rhs_raw, ctx=None):
-    """`a |> f` / `a |> f(b, c)` desugars, at eval time, to `f(a)` /
-    `f(a, b, c)` (fixed first-position, per IMPLEMENTATION_PLAN.md's locked
-    decision). `rhs_raw` arrives unevaluated (HoldRest) specifically so we
-    can splice `lhs_val` into the call *before* dispatch runs, rather than
-    evaluating the call first and trying to combine results after.
+    """`a |> f` / `a |> f(b, c)` / `a |> f(b, $, c)`.
+
+    Two forms, distinguished by whether the right-hand side mentions `$`
+    (proposal-001 §2.8):
+
+      - **no `$`** — first-position splice: `a |> f(b, c)` is `f(a, b, c)`.
+      - **any `$`** — template substitution: `a |> f(b, $)` is `f(b, a)`.
+        First-position splicing is *not* also applied.
+
+    `rhs_raw` arrives unevaluated (HoldRest) so both forms can rebuild the
+    call *before* dispatch runs, rather than evaluating it first and trying
+    to combine results after. `lhs_val` arrives already evaluated, which is
+    what makes "the subject is evaluated exactly once" structural rather
+    than a rule to enforce — substitution copies a value, it never re-runs
+    an expression, however many times `$` appears.
 
     Wolfram's postfix `//` parses to this same head: `a // f` is `a |> f`,
-    argument splicing included."""
+    both forms included."""
     if isinstance(rhs_raw, Expression) and rhs_raw.head == Symbol("Lambda"):
         # `a |> (x -> ...)` / `a // (x -> ...)`: the right side *is* the
         # function, not a call to splice an argument into — evaluate it to
-        # a Closure and apply that to `a`.
+        # a Closure and apply that to `a`. A `$` in a Lambda right-hand
+        # side is therefore never substituted; it stays unbound.
         return ctx.apply(ctx.eval(rhs_raw), [lhs_val])
     if isinstance(rhs_raw, Expression):
+        substituted, found = _substitute_dollar(rhs_raw, lhs_val)
+        if found:
+            return ctx.eval(substituted)
         spliced = Expression(rhs_raw.head, lhs_val, *rhs_raw.tail)
     elif isinstance(rhs_raw, Symbol):
         spliced = Expression(rhs_raw, lhs_val)

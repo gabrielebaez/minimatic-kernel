@@ -120,7 +120,7 @@ class Symbol(tuple):
         return False
 
     def __lt__(self, other: object) -> bool:
-        """Ordering for Orderless attribute (alphabetical by name)."""
+        """Total ordering over symbols, alphabetical by name."""
         if isinstance(other, Symbol):
             return self.name < other.name
         return NotImplemented
