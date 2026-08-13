@@ -337,6 +337,15 @@ class Parser:
         if tok.kind is TokenKind.LBRACE:
             return self.parse_dict_literal()
 
+        if tok.kind is TokenKind.DOLLAR:
+            # The pipe's placeholder, `a |> f($, b)`. Parsed as an ordinary
+            # Symbol so it travels through the held right-hand side
+            # unchanged; `__pipe__` is what gives it meaning (prelude.py).
+            # It is unforgeable as a user identifier — the IDENT scanner
+            # does not accept `$`.
+            self._advance()
+            return symbol("$")
+
         if tok.kind is TokenKind.IDENT:
             return self.parse_ident_or_pattern()
 
