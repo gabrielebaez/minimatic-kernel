@@ -78,7 +78,9 @@ def test_tour_runs_without_error_and_produces_expected_results(kernel):
     assert results[43] == "F"
     assert results[44] is None  # for(0..5, y -> print(y))
     assert results[45] == Symbol("greet")
-    assert results[46] is None  # greet() -> CompoundExpression's last stmt is print(...)
+    # greet()'s CompoundExpression ends in print(...), and print now returns
+    # its argument so it composes in pipes — so the value is the printed one.
+    assert results[46] == "World"
 
     # `//` (postfix apply) section
     assert results[47] == 3

@@ -27,8 +27,21 @@ class Kernel:
 
     def eval(self, source: str):
         """Evaluate exactly one top-level statement."""
+        return self.eval_pair(source)[1]
+
+    def eval_pair(self, source: str):
+        """`eval`, but returning `(statement, result)`.
+
+        The CLI needs the statement to decide whether to echo the result —
+        `print` now returns its argument so it composes in pipes, which
+        would otherwise make a top-level `print(x)` display twice."""
         tree = parse(source)
-        return self.evaluator.eval(tree, self.global_env)
+        return tree, self.evaluator.eval(tree, self.global_env)
+
+    def run_iter_pairs(self, source: str):
+        """Generator of `(statement, result)` — see `eval_pair`."""
+        for stmt in parse_all(source):
+            yield stmt, self.evaluator.eval(stmt, self.global_env)
 
     def run_iter(self, source: str):
         """Like `run`, but a generator: yields each statement's result as
@@ -39,8 +52,8 @@ class Kernel:
         `run`'s all-at-once list, every side effect from the *whole*
         script fires before any result gets echoed, badly scrambling
         output order."""
-        for stmt in parse_all(source):
-            yield self.evaluator.eval(stmt, self.global_env)
+        for _stmt, result in self.run_iter_pairs(source):
+            yield result
 
     def run(self, source: str) -> list:
         """Evaluate every top-level statement in `source`, in order,
@@ -49,16 +62,22 @@ class Kernel:
         statements — this is what running a *script* needs."""
         return list(self.run_iter(source))
 
-    def eval_file_iter(self, path: str):
-        """Generator version of `eval_file` — see `run_iter` for why this
-        matters (output-order interleaving with side effects)."""
+    def eval_file_iter_pairs(self, path: str):
+        """Generator of `(statement, result)` over a file — see
+        `eval_pair`."""
         p = Path(path)
         text = p.read_text()
         if p.suffix.lower() in _MARKDOWN_SUFFIXES:
             for block in extract_minimatic_blocks(text):
-                yield from self.run_iter(block)
+                yield from self.run_iter_pairs(block)
         else:
-            yield from self.run_iter(text)
+            yield from self.run_iter_pairs(text)
+
+    def eval_file_iter(self, path: str):
+        """Generator version of `eval_file` — see `run_iter` for why this
+        matters (output-order interleaving with side effects)."""
+        for _stmt, result in self.eval_file_iter_pairs(path):
+            yield result
 
     def eval_file(self, path: str) -> list:
         """

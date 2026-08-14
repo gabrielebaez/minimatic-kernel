@@ -43,6 +43,8 @@ def check_type(value, type_tag: str | None) -> bool:
         return isinstance(value, Expression) and value.head == Symbol("Dict")
     if tag == "expr":
         return isinstance(value, Expression)
+    if tag == "err":
+        return isinstance(value, Expression) and value.head == Symbol("Err")
     predicate = _TYPE_CHECKS.get(tag)
     if predicate is None:
         return False  # unknown type tag: fail closed, never silently match everything

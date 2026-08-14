@@ -45,6 +45,7 @@ class TokenKind(Enum):
     RANGE = auto()  # ..
     AMP = auto()  # &
     DOLLAR = auto()  # $ — the pipe's placeholder (a |> f($, b))
+    BANG = auto()  # ! — unary `not` sugar
 
     LPAREN = auto()
     RPAREN = auto()
@@ -108,6 +109,9 @@ _SINGLE_CHAR_OPS: dict[str, TokenKind] = {
     "%": TokenKind.PERCENT,
     "&": TokenKind.AMP,
     "$": TokenKind.DOLLAR,
+    # `!=` is in _MULTI_CHAR_OPS and matched first, so a bare `!` here is
+    # unambiguous.
+    "!": TokenKind.BANG,
     "(": TokenKind.LPAREN,
     ")": TokenKind.RPAREN,
     "[": TokenKind.LBRACKET,

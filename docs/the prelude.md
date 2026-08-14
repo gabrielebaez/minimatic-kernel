@@ -95,9 +95,9 @@ don't need kernel-level implementation.
 
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
-| `and`, `or` | `and(a, b, ...)` | `HoldRest`, `Flat` | short-circuiting — `HoldRest` so unevaluated later arguments aren't forced once the result is determined |
-| `not` | `not(a)` | — | `!` sugar |
-| `xor` | `xor(a, b)` | `Orderless` | non-short-circuiting; both sides always needed |
+| `and`, `or` | `and(a, b, ...)` | `HoldRest` | short-circuiting — `HoldRest` so unevaluated later arguments aren't forced once the result is determined. **Not yet implemented** |
+| `not` | `not(a)` | — | `!` sugar. Bool-only: there is no truthiness, so `!5` is a mistake rather than `False` |
+| `xor` | `xor(a, b)` | — | non-short-circuiting; both sides always needed. **Not yet implemented** |
 
 `&&`/`\|\|`/`!` are surface sugar for `and`/`or`/`not`. Short-circuiting
 via `HoldRest` is worth calling out explicitly: it's the same hold
@@ -234,29 +234,52 @@ result-kind test (`Head(r) == Err`) alongside `is_err`.
 
 ## 11. Errors and results (primitive core + derived combinators)
 
+Success is the value itself — **there is no `Ok` wrapper**. Failure is an
+`Err(kind, detail)` expression.
+
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
-| `Ok`, `Err` | `Ok(v)`, `Err(kind, detail)` | — | primitive constructors |
-| `is_ok`, `is_err` | `is_ok(r)` | `ResultAware` | |
-| `unwrap` | `unwrap(r, default)` | `ResultAware` | |
-| `unwrap_err` | `unwrap_err(r)` | `ResultAware` | |
+| `Err` | `Err(kind, detail)` | — | the only constructor; a one-argument call normalizes to two with `detail` = `Null` |
+| `is_err` | `is_err(r)` | `ResultAware` | negate with `!` |
+| `unwrap` | `unwrap(r, default)` | `ResultAware` | `default` if `r` is an `Err`, else `r` |
+| `unwrap_err` | `unwrap_err(r)` | `ResultAware` | the `Err`'s detail; a non-error is a programming error, not another `Err` |
 | `catch` | `catch(r, kind, handler)` | `ResultAware` | handles a specific `Err` kind, passes others through unchanged |
 | `recover` | `recover(r, handler)` | `ResultAware` | handles any `Err` |
-| `finally` | `finally(r, f)` | `ResultAware` | runs `f` for its side effect regardless of `Ok`/`Err`, then returns `r` unchanged |
-| `map_ok` | `map_ok(r, f)` | `ResultAware` | applies `f` inside `Ok`, passes `Err` through — the piece missing from the language doc's own examples, needed so a pipeline can transform a *successful* value without every downstream function needing to be `ResultAware` itself |
-| `and_then` | `and_then(r, f)` | `ResultAware` | like `map_ok`, but `f` itself returns a `Result` — for chaining fallible steps without nesting |
+| `finally` | `finally(r, f)` | `ResultAware` | runs `f` for its side effect either way, then returns `r` unchanged |
 
-`map_ok`/`and_then` are a proposed addition beyond what's shown in the
-language design doc's examples — without them, turning a successful `Ok`
-value into another `Ok`/`Err` mid-pipeline requires dropping into `match`
-every time, which undercuts the pipe-composition idiom (language doc §13)
-for the most common case in practice: a chain of several fallible steps.
+**`Ok`, `is_ok`, `map_ok` and `and_then` deliberately do not exist.** With
+success unwrapped, an ordinary function applied through the pipe already
+*is* `map_ok`, and a function that itself returns value-or-`Err` already
+chains like `and_then` — the whole lifting layer disappears rather than
+being provided. `is_ok(r)` is `!is_err(r)`.
+
+`Err` is an ordinary expression, so `Head`/`Args` and pattern matching work
+on it like anything else. Dispatching on kind is the primary idiom:
+
+```
+handle(Err("DivideByZero", d: _)) := ...
+handle(Err(k: _, d: _))           := ...   (* everything else *)
+```
+
+Clause order does not matter there — `score()` compares nested patterns, so
+the specific clause wins wherever it is written.
+
+**What is *not* an `Err`.** `Err` is for expected, routine failure. Passing
+a string where a list is required, calling an unknown head, or getting the
+argument count wrong stay *exceptions* (`MinimaticTypeError`, `ArityError`,
+...). Without that line every mistake becomes a value that drifts quietly
+down a pipeline, and the language loses its ability to say *you wrote this
+wrong*.
+
+**Pipes are what short-circuit, not calls.** `Err(...) |> f` skips `f`;
+`f(Err(...))` calls it. And `/@` desugars straight to `map(xs, f)` without
+going through the pipe, so `f /@ Err(...)` raises rather than skipping.
 
 ## 12. I/O and environment (primitive, thin)
 
 | Head | Signature | Notes |
 |---|---|---|
-| `print` | `print(x)` | side-effecting; returns `x` unchanged so it composes in a pipe for debugging (`xs \|> print \|> map(f)`) |
+| `print` | `print(x)` | side-effecting; returns `x` unchanged so it composes in a pipe for debugging (`xs \|> print \|> map(f)`). `ResultAware`, so it can show an `Err` mid-pipeline rather than being skipped. The REPL doesn't echo a top-level `print(x)`, so the value appears once |
 | `read`, `write` | `read(path)`, `write(path, content)` | `Ok`/`Err`-returning |
 | `to_json`, `from_json` | `to_json(x)`, `from_json(s)` | `from_json` is `Ok`/`Err`-returning |
 | `now` | `now()` | current timestamp — deliberately **not** memoized/pure; calling it twice can differ, which is worth flagging against principle 2 (determinism) — see §11.5 open question... actually §13.5 below |

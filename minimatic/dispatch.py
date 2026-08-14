@@ -16,14 +16,26 @@ patterns below.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import Callable
 
 from .ast.expression import Expression
 from .ast.patterns import Blank, BlankNullSeq, BlankSeq, PatternBind
 from .ast.symbol import Symbol
-from .errors import HeadAlreadySealedError, NoMatchingClauseError
+from .errors import (
+    ArityError,
+    HeadAlreadySealedError,
+    MinimaticError,
+    MinimaticTypeError,
+    NoMatchingClauseError,
+)
 from .match import match_all
+
+# Python exceptions a builtin may raise that mean "bad data", as opposed to
+# "the kernel has a bug". Deliberately narrow: AttributeError and friends
+# still surface as themselves rather than being disguised as user errors.
+_DATA_ERRORS = (ValueError, ZeroDivisionError, IndexError, KeyError)
 
 
 def _score_one(pattern) -> tuple:
@@ -61,6 +73,22 @@ def score(arg_patterns: tuple) -> tuple:
     return tuple(_score_one(p) for p in arg_patterns)
 
 
+def _arity_of(sig: inspect.Signature) -> str:
+    """Human-readable arity of a builtin, ignoring the injected `ctx`."""
+    params = [p for name, p in sig.parameters.items() if name != "ctx"]
+    positional = [
+        p
+        for p in params
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    required = sum(1 for p in positional if p.default is p.empty)
+    if any(p.kind is p.VAR_POSITIONAL for p in params):
+        return f"at least {required}"
+    if len(positional) != required:
+        return f"{required} to {len(positional)}"
+    return str(required)
+
+
 @dataclass
 class Clause:
     arg_patterns: tuple
@@ -69,6 +97,9 @@ class Clause:
     pass_ctx: bool = False
     specificity: tuple = field(default=())
     order: int = 0
+    # Cached at definition time, used only on the failure path (see
+    # ClauseSet._call_py) to tell an arity mistake from a type mistake.
+    signature: inspect.Signature | None = None
 
 
 class ClauseSet:
@@ -87,6 +118,7 @@ class ClauseSet:
             pass_ctx=pass_ctx,
             specificity=score(tuple(arg_patterns)),
             order=len(self.clauses),
+            signature=inspect.signature(py_fn) if py_fn is not None else None,
         )
         self.clauses.append(clause)
         # Descending specificity; same-score clauses keep declaration order.
@@ -105,8 +137,45 @@ class ClauseSet:
             if bindings is None:
                 continue
             if clause.py_fn is not None:
-                if clause.pass_ctx:
-                    return clause.py_fn(*args, ctx=ctx)
-                return clause.py_fn(*args)
+                return self._call_py(clause, args, ctx)
             return evaluator(clause.body, env.extend(bindings))
         raise NoMatchingClauseError(self.head_name, args)
+
+    def _call_py(self, clause: Clause, args: tuple, ctx):
+        """Invoke a Python-backed clause, keeping every failure inside the
+        `MinimaticError` hierarchy.
+
+        This is the single place builtins are called, so it is the only
+        place that has to know how. Before this, three kinds of failure
+        escaped as raw Python exceptions — a wrong-arity call, a bad
+        argument type (`plus(1, "a")`), and division by zero — so host code
+        catching "any Minimatic problem" silently missed them.
+
+        Classification happens *only* on the failure path: the call is
+        attempted first, so a successful dispatch pays nothing.
+        """
+        try:
+            if clause.pass_ctx:
+                return clause.py_fn(*args, ctx=ctx)
+            return clause.py_fn(*args)
+        except MinimaticError:
+            raise  # already ours, and already well-described
+        except TypeError as exc:
+            raise self._classify_type_error(clause, args, exc) from exc
+        except _DATA_ERRORS as exc:
+            raise MinimaticTypeError(f"{self.head_name}: {exc}") from exc
+
+    def _classify_type_error(self, clause: Clause, args: tuple, exc: TypeError):
+        """Was that TypeError the call itself not fitting the signature, or
+        something going wrong inside it? Re-binding the arguments answers
+        it without depending on CPython's error wording."""
+        sig = clause.signature
+        if sig is not None:
+            try:
+                if clause.pass_ctx:
+                    sig.bind(*args, ctx=None)
+                else:
+                    sig.bind(*args)
+            except TypeError:
+                return ArityError(self.head_name, _arity_of(sig), len(args))
+        return MinimaticTypeError(f"{self.head_name}: {exc}")

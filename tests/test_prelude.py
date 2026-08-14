@@ -176,8 +176,16 @@ def test_compound_expression_runs_in_order_and_returns_last(kernel):
     assert result == 6
 
 
-def test_print_returns_null(kernel):
-    assert kernel.eval('print("hello")') is None
+def test_print_returns_its_argument(kernel):
+    # Returns the value rather than Null so it composes in a pipe for
+    # debugging, as docs/the prelude.md §12 specifies. The REPL's
+    # double-print is handled in the CLI (minimatic/__main__.py), not by
+    # making the head return nothing.
+    assert kernel.eval('print("hello")') == "hello"
+
+
+def test_print_composes_in_a_pipe(kernel):
+    assert kernel.eval("[1, 2, 3] |> print |> length") == 3
 
 
 def test_range_desugars_to_half_open_list(kernel):

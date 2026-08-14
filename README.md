@@ -68,8 +68,9 @@ python -m minimatic examples/tour.md
   an ordinary function call.
 - **Errors are values.** Failable operations return their ordinary result on
   success, or an `Err` — there is no `Ok` wrapper — composed through `|>`,
-  `catch`, `recover`, and `finally` instead of exceptions. *(Decided; not
-  built yet.)*
+  `catch`, `recover`, and `finally` instead of exceptions. Programming
+  mistakes stay exceptions, so a typo never becomes a value drifting down a
+  pipeline.
 - **Trivially extensible from Python.** Any Python function can be
   registered as a new head, with its own evaluation and holding behavior,
   becoming a first-class part of the language rather than a bolted-on FFI
@@ -78,13 +79,14 @@ python -m minimatic examples/tour.md
 These goals exist in tension with each other by design. Resolving that
 tension is most of the work: how it was resolved for dispatch, results, and
 pipes is recorded in
-[proposal 001](docs/proposal-001-dispatch-results-and-pipes.md). Currently
-live is Phase C of that proposal — making failure a value.
+[proposal 001](docs/proposal-001-dispatch-results-and-pipes.md), whose
+code phases have all landed. What remains is reconciling the three design
+docs with it (Phase D).
 
 ## Status
 
 This kernel is pre-alpha. The MVP milestone (see `IMPLEMENTATION_PLAN.md`)
-is implemented and passing, as are Phases A and B of
+is implemented and passing, as are all the code phases of
 [proposal 001](docs/proposal-001-dispatch-results-and-pipes.md): every
 example in "What is Minimatic" above runs correctly through
 `python -m minimatic`, and the suite is green.
@@ -106,7 +108,9 @@ Statuses below mean exactly one of four things:
 | Hold attributes (`HoldAll`/`HoldFirst`/`HoldRest`) and `Listable` | working |
 | Control flow (`if`, `switch`, `which`, `for`, `each`, `;`) | working — ordinary heads, no special-form syntax |
 | Python extension API (`register_head`) | working, signature simplified — see below |
-| Value-or-`Err` results (`catch`, `recover`, `finally`) | decided — not built ([§2.5](docs/proposal-001-dispatch-results-and-pipes.md)) |
+| Value-or-`Err` results (`catch`, `recover`, `finally`) | working — no `Ok` wrapper ([§2.5](docs/proposal-001-dispatch-results-and-pipes.md)) |
+| Structure inspection (`Head`, `Args`) | working |
+| `not` / `!` | working; `and`/`or` not yet |
 | `Hold` / `ReleaseHold` / delayed rules (`:>`) | deferred |
 | Ambiguity detection at definition time (`overlaps`/`implies`) | **removed** ([§2.1](docs/proposal-001-dispatch-results-and-pipes.md)) |
 | `Flat` / `Orderless` attributes | **removed** ([§2.3](docs/proposal-001-dispatch-results-and-pipes.md)) |

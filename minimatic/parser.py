@@ -261,6 +261,10 @@ class Parser:
     # -- level 8: unary minus --------------------------------------------------
 
     def parse_unary(self):
+        if self._at(TokenKind.BANG):
+            self._advance()
+            operand = self.parse_unary()
+            return Expression(symbol("not"), operand)
         if self._at(TokenKind.MINUS):
             self._advance()
             operand = self.parse_unary()

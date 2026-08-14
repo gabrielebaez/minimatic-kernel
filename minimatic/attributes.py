@@ -113,6 +113,25 @@ Example:
 """
 
 
+# RESULT ATTRIBUTES
+
+ResultAware = Symbol("ResultAware")
+"""
+The head may receive an `Err` value through a pipe.
+
+By default `a |> f` skips `f` entirely when `a` is an `Err`, so ordinary
+functions never need a hand-written error passthrough. Heads marked
+`ResultAware` opt out of that skip because observing the error *is* their
+job: the result combinators (`is_err`, `catch`, `recover`, ...), and the
+inspectors (`print`, `Head`, `Args`) — without which a failing pipeline
+could not be debugged or examined.
+
+Example:
+    Err("IOError", "...") |> length     -> the Err, length never called
+    Err("IOError", "...") |> is_err     -> True
+"""
+
+
 # FUNCTION TYPE ATTRIBUTES
 
 NumericFunction = Symbol("NumericFunction")
@@ -169,7 +188,10 @@ HOLD_ATTRIBUTES = frozenset(
 """All attributes related to evaluation control."""
 
 ALL_ATTRIBUTES = (
-    STRUCTURAL_ATTRIBUTES | PROTECTION_ATTRIBUTES | HOLD_ATTRIBUTES | {NumericFunction, Stub}
+    STRUCTURAL_ATTRIBUTES
+    | PROTECTION_ATTRIBUTES
+    | HOLD_ATTRIBUTES
+    | {NumericFunction, Stub, ResultAware}
 )
 """All defined attributes."""
 

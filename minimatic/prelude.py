@@ -18,9 +18,10 @@ from __future__ import annotations
 from .ast.atoms import is_integer
 from .ast.expression import Expression, head_of, tail_of
 from .ast.symbol import Symbol
-from .attributes import HoldAll, HoldFirst, HoldRest, Listable
+from .attributes import HoldAll, HoldFirst, HoldRest, Listable, ResultAware
 from .errors import MinimaticSyntaxError, MinimaticTypeError
 from .extend import register_head
+from .result import err, is_err_value
 from .rewrite import extract_rules, replace_all
 
 
@@ -101,6 +102,26 @@ def _substitute_dollar(node, value):
     return Expression(new_head, *new_args), True
 
 
+def _target_is_result_aware(rhs_raw, ctx) -> bool:
+    """Is the pipe's target head allowed to receive an `Err` directly?
+
+    A `Lambda` right-hand side has no head at all, so it is never
+    `ResultAware` — an `Err` subject skips it rather than being handed to
+    a user lambda that has no way to know it got one.
+    """
+    head = None
+    if isinstance(rhs_raw, Symbol):
+        head = rhs_raw
+    elif isinstance(rhs_raw, Expression):
+        if rhs_raw.head == Symbol("Lambda"):
+            return False
+        if isinstance(rhs_raw.head, Symbol):
+            head = rhs_raw.head
+    if head is None:
+        return False
+    return ResultAware in ctx.registry.attributes(head.name)
+
+
 def _impl_pipe(lhs_val, rhs_raw, ctx=None):
     """`a |> f` / `a |> f(b, c)` / `a |> f(b, $, c)`.
 
@@ -120,6 +141,12 @@ def _impl_pipe(lhs_val, rhs_raw, ctx=None):
 
     Wolfram's postfix `//` parses to this same head: `a // f` is `a |> f`,
     both forms included."""
+    # Short-circuit first — before the Lambda branch, and before `$`
+    # substitution. A skipped pipe must not apply a user lambda to an
+    # error, and must not evaluate the template's other arguments either.
+    if is_err_value(lhs_val) and not _target_is_result_aware(rhs_raw, ctx):
+        return lhs_val
+
     if isinstance(rhs_raw, Expression) and rhs_raw.head == Symbol("Lambda"):
         # `a |> (x -> ...)` / `a // (x -> ...)`: the right side *is* the
         # function, not a call to splice an argument into — evaluate it to
@@ -216,8 +243,60 @@ def _impl_compound_expression(*args):
 
 
 def _impl_print(value):
+    # Returns its argument so it composes in a pipe for debugging
+    # (`xs |> print |> map(f)`), as docs/the prelude.md §12 has always
+    # said. The REPL double-print this used to avoid is handled in the
+    # CLI instead (see minimatic/__main__.py), rather than by crippling
+    # the head.
     print(value)
-    return None
+    return value
+
+
+# ------------------------------------------------------------------ result --
+#
+# Success is the value itself; failure is an `Err`. See minimatic/result.py
+# for the line between these and kernel exceptions. Every head here is
+# ResultAware: receiving an Err is the whole point, so the pipe must not
+# skip them.
+
+
+def _impl_err(kind, detail=None):
+    # Normalizes a one-argument call to two, so `Err(k: _, d: _)` matches
+    # every Err there is.
+    return err(kind, detail)
+
+
+def _impl_is_err(value):
+    return is_err_value(value)
+
+
+def _impl_unwrap(value, default):
+    return default if is_err_value(value) else value
+
+
+def _impl_unwrap_err(value):
+    """The `Err`'s detail. Asserting the value *is* an error is half the
+    point, so a non-error is a programming mistake, not another `Err`."""
+    if not is_err_value(value):
+        raise MinimaticTypeError(f"unwrap_err: expected an Err, got {value!r}")
+    return value.tail[1]
+
+
+def _impl_catch(value, kind, handler, ctx=None):
+    if not is_err_value(value) or value.tail[0] != kind:
+        return value  # not an error, or not this kind -- pass through
+    return ctx.apply(handler, [value])
+
+
+def _impl_recover(value, handler, ctx=None):
+    if not is_err_value(value):
+        return value
+    return ctx.apply(handler, [value])
+
+
+def _impl_finally(value, fn, ctx=None):
+    ctx.apply(fn, [value])
+    return value
 
 
 def _impl_range(lo, hi):
@@ -281,11 +360,12 @@ def _impl_length(list_expr):
 def _impl_first(list_expr):
     _check_list(list_expr, "first")
     if not list_expr.tail:
-        # Not `[]`: an empty list is itself a legitimate element, so
-        # `first([[], 1])` already answers `[]`. Returning it here too would
-        # make "there is no first element" indistinguishable from "the first
-        # element is empty".
-        raise MinimaticTypeError("first: empty list")
+        # An empty list has no first element -- a routine outcome, so a
+        # value rather than an exception. Not `[]`: an empty list is itself
+        # a legitimate element, so `first([[], 1])` already answers `[]`,
+        # and returning it here too would make "there is no first element"
+        # indistinguishable from "the first element is empty".
+        return err("EmptyList", "first: empty list")
     return list_expr.tail[0]
 
 
@@ -339,6 +419,11 @@ def _impl_times(*args):
 
 
 def _impl_divide(a, b):
+    if b == 0:
+        # Routine, not a programming error: dividing by a value that
+        # happens to be zero is ordinary arithmetic, and a raw
+        # ZeroDivisionError used to escape MinimaticError entirely.
+        return err("DivideByZero", f"divide: {a!r} by zero")
     return a / b
 
 
@@ -352,6 +437,14 @@ def _impl_mod(a, b):
 
 def _impl_negate(a):
     return -a
+
+
+def _impl_not(a):
+    # Bool-only, matching `if`'s strictness: there is no truthiness in
+    # Minimatic, so `!5` is a mistake rather than `false`.
+    if not isinstance(a, bool):
+        raise MinimaticTypeError(f"not: expected a bool, got {a!r}")
+    return not a
 
 
 def _impl_equal(a, b):
@@ -392,11 +485,21 @@ def register_prelude(registry) -> None:
     register_head(registry, "for", _impl_for, pass_ctx=True)
     register_head(registry, "each", _impl_each, pass_ctx=True)
     register_head(registry, "CompoundExpression", _impl_compound_expression)
-    register_head(registry, "print", _impl_print)
+    register_head(registry, "print", _impl_print, attributes=[ResultAware])
     register_head(registry, "Range", _impl_range)
 
-    register_head(registry, "Head", _impl_head_symbol)
-    register_head(registry, "Args", _impl_args)
+    # ResultAware: pure inspectors, total by construction. Without it,
+    # `Err(...) |> Head` would return the Err rather than its head symbol.
+    register_head(registry, "Head", _impl_head_symbol, attributes=[ResultAware])
+    register_head(registry, "Args", _impl_args, attributes=[ResultAware])
+
+    register_head(registry, "Err", _impl_err)
+    register_head(registry, "is_err", _impl_is_err, attributes=[ResultAware])
+    register_head(registry, "unwrap", _impl_unwrap, attributes=[ResultAware])
+    register_head(registry, "unwrap_err", _impl_unwrap_err, attributes=[ResultAware])
+    register_head(registry, "catch", _impl_catch, attributes=[ResultAware], pass_ctx=True)
+    register_head(registry, "recover", _impl_recover, attributes=[ResultAware], pass_ctx=True)
+    register_head(registry, "finally", _impl_finally, attributes=[ResultAware], pass_ctx=True)
 
     register_head(registry, "List", _impl_list)
     register_head(registry, "length", _impl_length)
@@ -413,6 +516,7 @@ def register_prelude(registry) -> None:
     register_head(registry, "power", _impl_power, attributes=[Listable])
     register_head(registry, "mod", _impl_mod, attributes=[Listable])
     register_head(registry, "negate", _impl_negate, attributes=[Listable])
+    register_head(registry, "not", _impl_not)
 
     register_head(registry, "equal", _impl_equal)
     register_head(registry, "not_equal", _impl_not_equal)

@@ -105,10 +105,11 @@ def test_rest_is_total(kernel):
     assert kernel.eval("rest([1])") == parse("[]")
 
 
-def test_first_of_empty_list_fails(kernel):
-    # Phase C converts this to Err("EmptyList", _); until then it raises.
-    with pytest.raises(MinimaticTypeError):
-        kernel.eval("first([])")
+def test_first_of_empty_list_is_an_err(kernel):
+    # Routine failure, so a value rather than an exception (see
+    # minimatic/result.py for the boundary).
+    assert kernel.eval("first([]) |> is_err") is True
+    assert kernel.eval("first([]) |> Args |> first") == "EmptyList"
 
 
 def test_empty_list_is_a_legitimate_first_element(kernel):

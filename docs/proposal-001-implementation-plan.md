@@ -1,7 +1,7 @@
 # Proposal 001 — Implementation Plan
 
 **Date:** 2026-08-07
-**Status:** Plan — not started
+**Status:** Phases A, B and C implemented; D and E outstanding
 **Implements:** `docs/proposal-001-dispatch-results-and-pipes.md`
 **Precondition:** the proposal is accepted. Nothing here should be built
 while §2.1 (removing ambiguity checking) is still under debate, since it is
@@ -18,9 +18,9 @@ is the removal of something never built. What remains is:
 
 | Phase | Work | Behavior change |
 |---|---|---|
-| A | Remove `Flat`/`Orderless`; correct stale docstrings | none |
-| B | Multi-arg pipe `$` templates (§2.8) | additive only |
-| C | `Value`/`Err` (§2.5) | new heads + failable prelude heads stop raising |
+| A | Remove `Flat`/`Orderless`; correct stale docstrings — **done** | none |
+| B | Multi-arg pipe `$` templates (§2.8) — **done** | additive only |
+| C | `Value`/`Err` (§2.5) — **done** | new heads + failable prelude heads stop raising |
 | D | Design-doc rewrite (§4.6) | none |
 | E | `README.md` + `IMPLEMENTATION_PLAN.md` reconciliation | none |
 
