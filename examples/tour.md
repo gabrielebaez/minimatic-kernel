@@ -129,9 +129,21 @@ add(5)(20)
 xs = [10, 20, 30]
 
 xs |> length
-xs |> head
-xs |> tail
+xs |> first
+xs |> rest
 xs |> append(40)
+```
+
+`first`/`rest` are the list accessors. `head` is *not* one of them: in a
+language where everything is `head(args)`, the head of `[10, 20, 30]` is
+`List`, not `10`. That inspection lives in `Head`, which is total — every
+value has a head, including `[]` and atoms:
+
+```minimatic
+Head(xs)
+Head([])
+Head(42)
+Args(xs)
 ```
 
 ## Control flow is ordinary functions, not special syntax

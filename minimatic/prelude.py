@@ -16,7 +16,7 @@ docs/proposal-001-dispatch-results-and-pipes.md §2.3.
 from __future__ import annotations
 
 from .ast.atoms import is_integer
-from .ast.expression import Expression
+from .ast.expression import Expression, head_of, tail_of
 from .ast.symbol import Symbol
 from .attributes import HoldAll, HoldFirst, HoldRest, Listable
 from .errors import MinimaticSyntaxError, MinimaticTypeError
@@ -230,6 +230,40 @@ def _impl_range(lo, hi):
 # ------------------------------------------------------------------ data --
 
 
+# --------------------------------------------------- structure inspection --
+#
+# `Head`/`Args` are PascalCase per docs/the prelude.md §2.4: they inspect
+# the language's own structure rather than processing data. They are also
+# why the list accessors are named `first`/`rest` — with `Head` meaning the
+# head of an expression, the word "head" has exactly one meaning in the
+# language, the one docs/the language.md §4 is built on.
+
+
+def _impl_head_symbol(value):
+    # Total: every value has a head, including `[]` (-> List) and atoms
+    # (5 -> Integer, "hi" -> String). No empty case to signal.
+    return head_of(value)
+
+
+def _impl_args(value):
+    # `tail_of` yields a raw tuple; wrap it as a List so the result is an
+    # ordinary Minimatic value. Atoms have no arguments, giving `[]`.
+    return Expression(Symbol("List"), *tail_of(value))
+
+
+# The symbols `head_of` returns for atoms. Bound as values (see
+# `bind_prelude_constants`) so `Head(5) == Integer` works and a head symbol
+# survives being passed back through evaluation — unlike registered heads
+# such as `List`, these name no clause set and would otherwise be unbound.
+ATOM_HEAD_NAMES = ("Integer", "Real", "Complex", "String", "Symbol")
+
+
+def bind_prelude_constants(env) -> None:
+    """Bind the atom-head symbols to themselves in `env`."""
+    for name in ATOM_HEAD_NAMES:
+        env.set_here(name, Symbol(name))
+
+
 def _check_list(value, who):
     if not (isinstance(value, Expression) and value.head == Symbol("List")):
         raise MinimaticTypeError(f"{who}: expected a List, got {value!r}")
@@ -244,15 +278,22 @@ def _impl_length(list_expr):
     return len(list_expr.tail)
 
 
-def _impl_head(list_expr):
-    _check_list(list_expr, "head")
+def _impl_first(list_expr):
+    _check_list(list_expr, "first")
     if not list_expr.tail:
-        raise MinimaticTypeError("head: empty list")
+        # Not `[]`: an empty list is itself a legitimate element, so
+        # `first([[], 1])` already answers `[]`. Returning it here too would
+        # make "there is no first element" indistinguishable from "the first
+        # element is empty".
+        raise MinimaticTypeError("first: empty list")
     return list_expr.tail[0]
 
 
-def _impl_tail(list_expr):
-    _check_list(list_expr, "tail")
+def _impl_rest(list_expr):
+    # Total, unlike `first`: the rest of an empty list genuinely is the
+    # empty list, and making it fail would put an unwrap in every recursive
+    # traversal.
+    _check_list(list_expr, "rest")
     return Expression(Symbol("List"), *list_expr.tail[1:])
 
 
@@ -354,10 +395,13 @@ def register_prelude(registry) -> None:
     register_head(registry, "print", _impl_print)
     register_head(registry, "Range", _impl_range)
 
+    register_head(registry, "Head", _impl_head_symbol)
+    register_head(registry, "Args", _impl_args)
+
     register_head(registry, "List", _impl_list)
     register_head(registry, "length", _impl_length)
-    register_head(registry, "head", _impl_head)
-    register_head(registry, "tail", _impl_tail)
+    register_head(registry, "first", _impl_first)
+    register_head(registry, "rest", _impl_rest)
     register_head(registry, "append", _impl_append)
     register_head(registry, "map", _impl_map, pass_ctx=True)
     register_head(registry, "fold", _impl_fold, pass_ctx=True)

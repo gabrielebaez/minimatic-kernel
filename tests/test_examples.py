@@ -21,7 +21,7 @@ def _list(*items):
 def test_tour_runs_without_error_and_produces_expected_results(kernel):
     results = kernel.eval_file(str(TOUR_PATH))
 
-    assert len(results) == 52
+    assert len(results) == 56
 
     # describe(5), describe("hi"), describe(3.14) — after 3 SetDelayed clauses
     assert results[3] == "an integer"
@@ -57,30 +57,36 @@ def test_tour_runs_without_error_and_produces_expected_results(kernel):
     # sum of squares via pipe/map/fold
     assert results[29] == 30
 
-    # trailing list-op block: xs, length, head, tail, append
+    # trailing list-op block: xs, length, first, rest, append
     assert results[30] == _list(10, 20, 30)
     assert results[31] == 3
     assert results[32] == 10
     assert results[33] == _list(20, 30)
     assert results[34] == _list(10, 20, 30, 40)
 
+    # structure inspection: Head(xs), Head([]), Head(42), Args(xs)
+    assert results[35] == Symbol("List")
+    assert results[36] == Symbol("List")
+    assert results[37] == Symbol("Integer")
+    assert results[38] == _list(10, 20, 30)
+
     # control-flow section: if, grade (switch-based), for, greet (CompoundExpression)
-    assert results[35] == "yes"
-    assert results[36] == Symbol("grade")
-    assert results[37] == "A"
-    assert results[38] == "C"
-    assert results[39] == "F"
-    assert results[40] is None  # for(0..5, y -> print(y))
-    assert results[41] == Symbol("greet")
-    assert results[42] is None  # greet() -> CompoundExpression's last stmt is print(...)
+    assert results[39] == "yes"
+    assert results[40] == Symbol("grade")
+    assert results[41] == "A"
+    assert results[42] == "C"
+    assert results[43] == "F"
+    assert results[44] is None  # for(0..5, y -> print(y))
+    assert results[45] == Symbol("greet")
+    assert results[46] is None  # greet() -> CompoundExpression's last stmt is print(...)
 
     # `//` (postfix apply) section
-    assert results[43] == 3
-    assert results[44] == _list(1, 2, 3, 4)
-    assert results[45] == 10
-    assert results[46] == 30
+    assert results[47] == 3
+    assert results[48] == _list(1, 2, 3, 4)
+    assert results[49] == 10
+    assert results[50] == 30
 
     # `/@` (map) section — after 2 SetDelayed clauses
-    assert results[49] == _list(3, 6, 9)
-    assert results[50] == _list(6, 9, 12)  # right-assoc: inc first, then triple
-    assert results[51] == 18
+    assert results[53] == _list(3, 6, 9)
+    assert results[54] == _list(6, 9, 12)  # right-assoc: inc first, then triple
+    assert results[55] == 18

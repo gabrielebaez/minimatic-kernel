@@ -111,8 +111,8 @@ mechanism doesn't need special-casing per use.
 |---|---|---|---|
 | `List` | `List(x, ...)` | — | the `[...]` literal's head |
 | `length` | `length(xs)` | — | primitive |
-| `head` | `head(xs)` | — | `Err("EmptyList", _)` on `[]`, not a raised error |
-| `tail` | `tail(xs)` | — | total: `tail([])` is `[]`. Unlike `head`, it has a sensible answer for the empty list, and making it fail would put an `Err` unwrap in every recursive traversal |
+| `first` | `first(xs)` | — | `Err("EmptyList", _)` on `[]`, not a raised error. Not `[]` — an empty list is itself a legitimate element, so the two cases must stay distinguishable |
+| `rest` | `rest(xs)` | — | total: `rest([])` is `[]`. Unlike `first`, it has a sensible answer for the empty list, and making it fail would put an `Err` unwrap in every recursive traversal |
 | `append`, `prepend` | `append(xs, x)` | — | new list |
 | `concat` | `concat(xs, ys, ...)` | `Flat` | list concatenation |
 | `map` | `map(f, xs)` | — | primitive-adjacent (drives evaluation order); pipe form `xs \|> map(f)` |
@@ -159,7 +159,7 @@ host-registered heads.
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
 | `str` | `str(x)` | — | primitive; canonical string conversion for any value |
-| `length` | (shared with List) | — | strings and lists share `length`, `head`/`tail`, `take`/`drop` where the semantics genuinely coincide (both are ordered sequences) — see §9 |
+| `length` | (shared with List) | — | strings and lists share `length`, `first`/`rest`, `take`/`drop` where the semantics genuinely coincide (both are ordered sequences) — see §9 |
 | `split`, `join` | `split(s, sep)`, `join(xs, sep)` | — | |
 | `upper`, `lower`, `trim` | `upper(s)` | — | |
 | `replace` | `replace(s, old, new)` | — | literal substring, not pattern-based — pattern-based text rewriting should go through `/.` on a parsed/tokenized form instead, not duplicate rewrite semantics under a different name |
@@ -210,16 +210,27 @@ Both should exist rather than forcing one idiom into the other's job.
 | `Rule`, `RuleDelayed` | `Rule(lhs, rhs)` | `HoldRest` (`RuleDelayed` only) | underlie `->` / `:>` sugar |
 | `ReplaceAll` | `ReplaceAll(expr, rules)` | — | underlies `/.` sugar |
 | `Attributes` | `Attributes(head)`, `Attributes(head) := [...]` | `HoldFirst` | reads or sets a head's attribute set (kernel doc §8); setting after clauses exist is a definition-time error (language doc §10) |
-| `HeldExpr` / inspecting a held tree's `head`/`args` | `head_of(expr)`, `args_of(expr)` | — | needed for any Minimatic code that wants to *write* rewriting tools rather than just use `/.` directly — e.g. a user-level `simplify` function |
+| `Head` | `Head(expr)` | — | the expression's head symbol. Total — `Head([])` is `List`, `Head(5)` is `Integer` |
+| `Args` | `Args(expr)` | — | the expression's arguments, as a `List`. `Args(5)` is `[]` |
 
-`head_of`/`args_of` are listed with some hesitation — they're the minimum
-needed for Minimatic code to introspect an expression tree itself
-(useful for anyone writing their own rewrite-driven tooling on top of the
-language), but they also start to blur the "rewriting is explicit, not
-ambient" line if overused, since they let user code branch on expression
-*shape* outside of pattern matching. Worth discussing whether these should
-exist at all, or whether `match`/`Cases` are meant to be the only sanctioned
-way to inspect a held expression (open question, §11.4).
+`Head`/`Args` were long listed here as `head_of`/`args_of`, with some
+hesitation: they let user code branch on expression *shape* outside of
+pattern matching, which starts to blur the "rewriting is explicit, not
+ambient" line if overused. They are included, under their conventional
+names, for two reasons.
+
+First, the naming. `head` cannot mean "first element of a list" in a
+language whose one organising idea is that everything is `head(args)`
+(language doc §4) — that was a collision at the centre of the vocabulary,
+and the kernel had it in a single line of code, implementing first-element
+as `list_expr.tail[0]`. The list accessors are now `first`/`rest` (§5), and
+`Head`/`Args` take the names that were always theirs, PascalCase per §2.4.
+
+Second, the hesitation is much weaker than it looks while `Hold` is
+deferred: these can only inspect *evaluated* data, which patterns already
+destructure. `Head` is also total in a way no pattern is — every value has
+one, including `[]` and atoms — which is what makes it a reasonable
+result-kind test (`Head(r) == Err`) alongside `is_err`.
 
 ## 11. Errors and results (primitive core + derived combinators)
 
@@ -299,16 +310,16 @@ an exception.
    returned from a `Lambda`, which the language already supports without
    a dedicated head; `curry` may be redundant sugar rather than a needed
    primitive.
-3. **String/List head sharing** (§7) — `length`, `head`/`tail`,
+3. **String/List head sharing** (§7) — `length`, `first`/`rest`,
    `take`/`drop` are proposed as shared across `String` and `List`. Does
    this mean dispatch needs a "sequence-like" pattern type broader than
    `_list`/`_string` individually, or does each head just get two clauses
    (one per type)? This has real consequences for the specificity/
    ambiguity machinery (kernel doc §6) and should be resolved before
    implementation.
-4. **`head_of`/`args_of`** (§10) — should these exist, or should `match`/
-   `Cases` be the only sanctioned way to inspect a held expression's
-   shape from Minimatic code? Argued both ways in §10.
+4. ~~**`head_of`/`args_of`** (§10) — should these exist?~~ **Closed:** yes,
+   as `Head`/`Args`. See §10 for the reasoning and for why the list
+   accessors became `first`/`rest`.
 5. **Non-determinism in `now`/`random`** (§12) — should these require an
    attribute marking them as impure/non-deterministic (visible in
    tooling, e.g. a linter warning if used inside something meant to be

@@ -11,7 +11,7 @@ from .eval import Evaluator
 from .extend import register_head as _register_head
 from .markdown import extract_minimatic_blocks
 from .parser import parse, parse_all
-from .prelude import register_prelude
+from .prelude import bind_prelude_constants, register_prelude
 from .registry import Registry
 
 _MARKDOWN_SUFFIXES = (".md", ".markdown")
@@ -23,6 +23,7 @@ class Kernel:
         self.global_env = Env()
         self.evaluator = Evaluator(self.registry)
         register_prelude(self.registry)
+        bind_prelude_constants(self.global_env)
 
     def eval(self, source: str):
         """Evaluate exactly one top-level statement."""

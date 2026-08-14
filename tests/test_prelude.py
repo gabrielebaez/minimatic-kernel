@@ -28,8 +28,8 @@ def test_list_literal_evaluates_elements(kernel):
 
 def test_list_operations(kernel):
     assert kernel.eval("[1, 2, 3] |> length") == 3
-    assert kernel.eval("[1, 2, 3] |> head") == 1
-    assert kernel.eval("[1, 2, 3] |> tail") == Expression(Symbol("List"), 2, 3)
+    assert kernel.eval("[1, 2, 3] |> first") == 1
+    assert kernel.eval("[1, 2, 3] |> rest") == Expression(Symbol("List"), 2, 3)
     assert kernel.eval("[1, 2, 3] |> append(4)") == Expression(
         Symbol("List"), 1, 2, 3, 4
     )

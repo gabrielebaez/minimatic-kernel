@@ -258,8 +258,8 @@ function needs a different identifier.
 | Head | Today | After |
 |---|---|---|
 | `divide` | `a / b` → raw Python `ZeroDivisionError` escapes the kernel | `Err("DivideByZero", ...)` |
-| `head` | `MinimaticTypeError("head: empty list")` | `Err("EmptyList", ...)` |
-| `tail` | same shape | `Err("EmptyList", ...)` |
+| `first` | `MinimaticTypeError("first: empty list")` | `Err("EmptyList", ...)` |
+| `rest` | returns `[]` | unchanged — returns `[]` |
 
 Leave raising: `switch`/`which` with no matching case, every
 `MinimaticTypeError` type check, and all `_require_list` guards — these are
@@ -293,7 +293,7 @@ visible rather than accidental.
 - No short-circuit into a `ResultAware` head.
 - Each of `is_err`/`unwrap`/`unwrap_err`/`catch`/`recover`/`finally`.
 - `catch` passes a non-matching kind through unchanged.
-- `divide(1, 0)`, `head([])`, `tail([])` return `Err`, and a `MinimaticError`
+- `divide(1, 0)` and `first([])` return `Err`, and a `MinimaticError`
   subclass no longer escapes as a bare `ZeroDivisionError`.
 - `r: _err` matches in a clause pattern.
 - A chained pipeline: failure at step one skips steps two and three and
@@ -394,7 +394,7 @@ divide(1, 0) |> recover(e -> 0)      (* 0  — ResultAware, not skipped *)
 ## Risks
 
 - **Phase C is the only one that can break existing programs.** Anything
-  relying on `head([])` raising now gets a value back. The blast radius is
+  relying on `first([])` raising now gets a value back. The blast radius is
   small today (nothing in `examples/` or the test suite depends on it), but
   it grows with every week this is delayed.
 - **Phase B's re-evaluation quirk (B4)** is pre-existing and easy to
