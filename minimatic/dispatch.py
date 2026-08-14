@@ -1,14 +1,17 @@
 """
-Dispatch - ClauseSet with hybrid specificity + declaration-order dispatch.
+Dispatch - ClauseSet with specificity + declaration-order dispatch.
 
-MVP simplification (see IMPLEMENTATION_PLAN.md): clauses are ranked by
-`score()` exactly as in the full design (literal > typed blank > blank >
-sequence blank, compared lexicographically across argument positions), but
-same-score clauses are NOT checked for ambiguity — they simply stay in
-declaration order among themselves. There is no `overlaps()`/`implies()`,
-no `AmbiguousClauseError`. Callers should not treat same-score-tie
-resolution as a stable, guaranteed feature; it is a placeholder for the
-ambiguity-rejecting behavior the full design calls for.
+Clauses are ranked by `score()` — literal > typed blank > blank > sequence
+blank, compared lexicographically across argument positions — and
+same-score clauses are tried in declaration order, first structural match
+winning. That is the specification, not a placeholder: definition-time
+ambiguity rejection (`overlaps()`/`implies()`, `AmbiguousClauseError`) was
+removed from the language rather than deferred. See
+docs/proposal-001-dispatch-results-and-pipes.md §2.1 and §2.2.
+
+Because nothing rejects overlapping clauses any more, `score()` has to be
+able to tell them apart on its own — hence the recursion into compound
+patterns below.
 """
 
 from __future__ import annotations
@@ -16,25 +19,44 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .ast.expression import Expression
 from .ast.patterns import Blank, BlankNullSeq, BlankSeq, PatternBind
 from .ast.symbol import Symbol
 from .errors import HeadAlreadySealedError, NoMatchingClauseError
 from .match import match_all
 
 
-def _score_one(pattern) -> int:
+def _score_one(pattern) -> tuple:
+    """Specificity of a single pattern, as a nested tuple compared
+    structurally against another pattern's.
+
+    Compound patterns recurse into their arguments, so
+    `Err("IOError", d: _)` -> `(3, ((3,), (1,)))` outranks
+    `Err(k: _, d: _)` -> `(3, ((1,), (1,)))`. Without that recursion both
+    score the same and the more specific clause wins only if it happens to
+    be declared first — which, with ambiguity rejection gone, is a silently
+    wrong answer rather than a rejected definition.
+    """
     if isinstance(pattern, PatternBind):
         return _score_one(pattern.pattern)
     if isinstance(pattern, (BlankSeq, BlankNullSeq)):
-        return 0
+        return (0,)
     if isinstance(pattern, Blank):
-        return 2 if pattern.type_tag is not None else 1
+        return (2,) if pattern.type_tag is not None else (1,)
     if isinstance(pattern, Symbol):
-        return 1  # bare identifier binds anything, same tier as bare `_`
-    return 3  # literal or nested Expression pattern: most specific
+        return (1,)  # bare identifier binds anything, same tier as bare `_`
+    if isinstance(pattern, Expression):
+        # The head is deliberately not scored: two compound patterns with
+        # different heads are disjoint, so it would add no signal.
+        #
+        # Note an empty compound `[]` scores `(3, ())`, which sorts below a
+        # non-empty one like `[x: _, rest: ___]`. Harmless — those two are
+        # disjoint — but it is not a bug if you notice it.
+        return (3, tuple(_score_one(a) for a in pattern.tail))
+    return (3,)  # literal: most specific
 
 
-def score(arg_patterns: tuple) -> tuple[int, ...]:
+def score(arg_patterns: tuple) -> tuple:
     """Per-argument specificity vector, compared lexicographically."""
     return tuple(_score_one(p) for p in arg_patterns)
 
@@ -67,9 +89,12 @@ class ClauseSet:
             order=len(self.clauses),
         )
         self.clauses.append(clause)
-        # Descending specificity; same-score clauses keep declaration order
-        # (stable sort + order-as-secondary-key achieves this).
-        self.clauses.sort(key=lambda c: (tuple(-s for s in c.specificity), c.order))
+        # Descending specificity; same-score clauses keep declaration order.
+        # `list.sort` is stable even with reverse=True, and clauses are
+        # appended in declaration order, so ties preserve it on their own —
+        # no secondary key needed. (Negating the score, as this used to do,
+        # is not possible now that a score is a nested tuple.)
+        self.clauses.sort(key=lambda c: c.specificity, reverse=True)
         return clause
 
     def apply(self, args, env, evaluator: Callable, ctx=None):

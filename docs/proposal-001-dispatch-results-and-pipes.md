@@ -207,8 +207,9 @@ distinct head rather than a falsy value.
 
 ### 2.6 Self-hosting derived prelude — deferred (unchanged)
 
-Derived heads continue to ship as Python. §4.2 notes a hard prerequisite
-this deferral is now hiding.
+Derived heads continue to ship as Python. An earlier draft claimed this
+deferral was hiding a dispatch prerequisite; it was not — see the
+correction at the end of §4.2.
 
 ### 2.7 Redefinition — sealed after first dispatch (unchanged)
 
@@ -311,48 +312,43 @@ Stated explicitly so the proposal's blast radius is legible:
   stable, guaranteed feature; it is a placeholder." Under §2.2 it *is* the
   guaranteed feature and must be documented as such.
 
-### 4.2 One load-bearing consequence: `score()` does not recurse
+### 4.2 One load-bearing consequence: `score()` did not recurse
 
-This is the most actionable implication and it needs its own decision.
+> **Resolved.** `score()` now recurses into compound patterns. What follows
+> is kept as the record of why, since it is the clearest illustration of
+> what removing ambiguity rejection costs.
 
-`_score_one` (`minimatic/dispatch.py:26`) returns `3` for *any* compound
-`Expression` pattern, without recursing into its arguments. So these two
-clauses tie:
+`_score_one` returned `3` for *any* compound `Expression` pattern, without
+recursing into its arguments. So these two clauses tied:
 
 ```
 handle(Err("IOError", d: _)) := ...      (* score (3,) *)
 handle(Err(k: _, d: _))      := ...      (* score (3,) — tie *)
 ```
 
-The obviously-more-specific clause wins only if it happens to be declared
-first. While ambiguity detection existed, this pair would have been
-*rejected*, and the flatness of `score()` never mattered. Removing the
-check turns it into silent wrong dispatch — and it lands squarely on two
-idioms this proposal and the existing design actively promote:
+The obviously-more-specific clause won only if it happened to be declared
+first — and declared *second*, it never fired at all. While ambiguity
+detection existed, this pair would have been *rejected*, and the flatness of
+`score()` never mattered. Removing the check turned it into silent wrong
+dispatch, landing squarely on **`Err`-versus-`Err` dispatch**, the primary
+error-handling idiom under §2.5. (`Err` versus a plain value was always
+fine: a bare binder scores `1`, a compound `3`, so `docs/the language.md`
+§12's `match` example resolved correctly throughout.)
 
-1. **`Err`-versus-`Err` dispatch**, now the primary error-handling idiom
-   under §2.5. (`Err` versus a plain value is fine: a bare binder scores
-   `1`, a compound scores `3`, so `docs/the language.md` §12's `match`
-   example still resolves correctly.)
-2. **The self-hosted prelude.** `docs/the prelude.md` §13's motivating
-   example is exactly this shape:
-   ```
-   fold(f: _, init: _, [])               := init
-   fold(f: _, init: _, [x: _, rest: __]) := fold(f, f(init, x), rest)
-   ```
-   Both third arguments score `3`. It works today only by declaration
-   order.
+The fix: a compound pattern scores as a nested vector over its arguments,
+compared structurally, so `Err("IOError", d: _)` → `(3, ((3,), (1,)))`
+strictly outscores `Err(k: _, d: _)` → `(3, ((1,), (1,)))`. It is entirely
+local to `dispatch.py` and requires none of the `overlaps`/`implies`
+machinery this proposal removes.
 
-**Therefore: self-hosting (§2.6) is blocked on nested `score()`, and on
-nothing else.** That dependency was previously invisible because ambiguity
-detection would have surfaced it as an error.
-
-**Recommended follow-up (not decided here):** make `score()` recursive — a
-compound pattern scores as a nested vector over its head and arguments,
-compared lexicographically, so `Err("IOError", d: _)` strictly outscores
-`Err(k: _, d: _)`. This is cheap, fully specified, entirely local to
-`dispatch.py`, and requires none of the `overlaps`/`implies` machinery
-being removed. It deserves its own proposal.
+**Correction — self-hosting was never blocked on this.** An earlier draft of
+this section claimed `docs/the prelude.md` §13's self-hosted `fold` "works
+today only by declaration order." That was wrong: its two clauses are
+**disjoint** (`[]` versus a non-empty list), so both orderings always
+agreed. What §13 actually had was an unrelated bug — written with `__`
+(one-or-more), a single-element list matched *neither* clause and raised
+`NoMatchingClauseError`. It needs `___`. Both the claim and the example
+have been corrected.
 
 ### 4.3 Downstream: `minimatic-workbench`
 
@@ -373,7 +369,8 @@ being removed. It deserves its own proposal.
   `plus`, `times`, `min`, `max`, `and`, `or`, `xor`, `concat`, `merge`.
   No signature or arity changes — see §2.3.
 - §11: apply the table in §2.5 (drop `Ok`, `is_ok`, `map_ok`, `and_then`).
-- §13: keep as an aspiration, annotated with the §4.2 prerequisite.
+- §13: keep as an aspiration; fix the `fold` example's `__` → `___` (see
+  the correction at the end of §4.2).
 
 ### 4.5 Open questions closed and opened
 
@@ -388,7 +385,7 @@ being removed. It deserves its own proposal.
 | language §16.5 — multi-argument pipe | **Closed** (§2.8) |
 | language §16.1/§16.2 — numeric tower, strings | Open, untouched |
 | prelude §14.2/§14.3/§14.5/§14.6 | Open, untouched |
-| **New:** nested `score()` for compound patterns | **Newly open, and now blocking** (§4.2) |
+| **New:** nested `score()` for compound patterns | **Closed** — implemented (§4.2) |
 
 ### 4.6 Documentation edits adoption would require
 
@@ -457,9 +454,9 @@ The load-bearing risk is §2.1. If silent shadowing turns out to hurt in
 real use, the recovery path is deliberately cheap and does **not** require
 resurrecting `overlaps`/`implies`:
 
-1. Add nested `score()` (§4.2). This alone eliminates the large majority of
-   real same-score ties, since most accidental overlaps differ in nested
-   specificity.
+1. ~~Add nested `score()` (§4.2).~~ **Done.** This alone eliminates the
+   large majority of real same-score ties, since most accidental overlaps
+   differ in nested specificity.
 2. Add a **non-fatal lint** at definition time for same-arity,
    same-score clause pairs — a warning, or an error only under an opt-in
    `Kernel(strict=True)`. Because §2.2 *specifies* the tie-break rather

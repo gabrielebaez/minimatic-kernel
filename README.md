@@ -123,10 +123,10 @@ Statuses below mean exactly one of four things:
 >   of them changes behavior. (Clauses with different scores are unaffected:
 >   `describe(_int)` / `describe(_string)` / `describe(_)` behave the same
 >   no matter how they are written.)
-> - `score()` does not recurse into compound patterns, so
->   `f(Err("IOError", d: _))` and `f(Err(k: _, d: _))` tie — the
->   obviously-more-specific clause wins only if it is declared first. This
->   is a known gap, not intended behavior; see §4.2 of the proposal.
+> - Specificity is compared at every depth. `f(Err("IOError", d: _))` beats
+>   `f(Err(k: _, d: _))` however they are ordered, because `score()`
+>   recurses into compound patterns. Only clauses that are equally specific
+>   *all the way down* fall through to declaration order.
 >
 > Earlier drafts promised that overlapping same-specificity clauses would be
 > *rejected* at definition time. That check was removed rather than

@@ -22,20 +22,78 @@ def test_disjoint_equal_specificity_clauses_both_usable(kernel):
     assert kernel.eval('greet("x")') == "ecks"
 
 
-def test_mvp_gap_overlapping_equal_specificity_resolves_by_order(kernel):
-    """
-    Documents the known MVP gap (IMPLEMENTATION_PLAN.md): two clauses with
-    equal specificity AND overlapping domains should, per the full design,
-    be rejected as ambiguous at definition time. The MVP dispatch engine
-    does not implement that check yet, so this currently resolves silently
-    by declaration order (first-defined wins) instead of raising
-    AmbiguousClauseError. This test exists to make that gap visible and
-    should be updated (or replaced by a raises-AmbiguousClauseError test)
-    the moment ambiguity detection lands.
+def test_genuinely_equal_clauses_resolve_by_declaration_order(kernel):
+    """Two clauses that are equally specific *and* overlapping resolve by
+    declaration order, first-defined winning.
+
+    This is the specification, not a gap: definition-time ambiguity
+    rejection was removed from the language rather than deferred
+    (proposal-001 §2.1/§2.2). Where two clauses differ in specificity at
+    any depth, `score()` separates them — see the compound-pattern tests
+    below; this case is the genuine tie that remains.
     """
     kernel.eval('pick(x: _) := "first"')
     kernel.eval('pick(x: _) := "second"')
     assert kernel.eval("pick(1)") == "first"
+
+
+def test_compound_pattern_specificity_beats_declaration_order(kernel):
+    """`score()` recurses into compound patterns, so a more specific one
+    wins regardless of the order the clauses were written in.
+
+    This is the error-kind dispatch idiom that value-or-`Err` makes primary
+    (proposal-001 §2.5) — `Err("IOError", d: _)` handling one kind, with a
+    general clause behind it. Before `score()` recursed, both scored the
+    same and the specific clause declared second never fired at all.
+    """
+    kernel.eval('handle([k: _, d: _])      := "other error"')
+    kernel.eval('handle(["IOError", d: _]) := "caught IOError"')
+
+    assert kernel.eval('handle(["IOError", "boom"])') == "caught IOError"
+    assert kernel.eval('handle(["Timeout", "slow"])') == "other error"
+
+
+def test_compound_pattern_specificity_is_order_independent(kernel):
+    # Same clause set as above, declared the other way round.
+    kernel.eval('handle(["IOError", d: _]) := "caught IOError"')
+    kernel.eval('handle([k: _, d: _])      := "other error"')
+
+    assert kernel.eval('handle(["IOError", "boom"])') == "caught IOError"
+    assert kernel.eval('handle(["Timeout", "slow"])') == "other error"
+
+
+def test_compound_specificity_recurses_more_than_one_level(kernel):
+    kernel.eval('deep([[a: _, b: _], y: _]) := "general"')
+    kernel.eval('deep([[1, x: _], y: _])    := "specific"')
+
+    assert kernel.eval("deep([[1, 2], 3])") == "specific"
+    assert kernel.eval("deep([[9, 2], 3])") == "general"
+
+
+def test_disjoint_compound_clauses_are_order_independent(kernel):
+    """The self-hosted `fold` shape from `docs/the prelude.md` §13: an empty
+    -list clause and a cons clause. Their domains are disjoint, so ordering
+    never mattered for these two — but the cons clause must use `___`
+    (zero-or-more), not `__`, or a single-element list matches neither.
+    """
+    kernel.eval('fd(f: _, i: _, [x: _, r: ___]) := "step"')
+    kernel.eval('fd(f: _, i: _, [])             := "base"')
+
+    assert kernel.eval("fd(plus, 0, [])") == "base"
+    assert kernel.eval("fd(plus, 0, [5])") == "step"
+    assert kernel.eval("fd(plus, 0, [5, 6])") == "step"
+
+
+def test_one_or_more_sequence_leaves_single_element_lists_unmatched(kernel):
+    # Pins the bug in the prelude §13 example: with `__`, `[5]` matches
+    # neither clause. Documented so the doc fix has a regression behind it.
+    kernel.eval('bad(f: _, i: _, [])             := "base"')
+    kernel.eval('bad(f: _, i: _, [x: _, r: __])  := "step"')
+
+    assert kernel.eval("bad(plus, 0, [])") == "base"
+    assert kernel.eval("bad(plus, 0, [5, 6])") == "step"
+    with pytest.raises(NoMatchingClauseError):
+        kernel.eval("bad(plus, 0, [5])")
 
 
 def test_sequence_pattern_is_least_specific(kernel):

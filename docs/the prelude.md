@@ -111,7 +111,8 @@ mechanism doesn't need special-casing per use.
 |---|---|---|---|
 | `List` | `List(x, ...)` | — | the `[...]` literal's head |
 | `length` | `length(xs)` | — | primitive |
-| `head`, `tail` | `head(xs)`, `tail(xs)` | — | `Err("EmptyList", _)` on `[]`, not a raised error |
+| `head` | `head(xs)` | — | `Err("EmptyList", _)` on `[]`, not a raised error |
+| `tail` | `tail(xs)` | — | total: `tail([])` is `[]`. Unlike `head`, it has a sensible answer for the empty list, and making it fail would put an `Err` unwrap in every recursive traversal |
 | `append`, `prepend` | `append(xs, x)` | — | new list |
 | `concat` | `concat(xs, ys, ...)` | `Flat` | list concatenation |
 | `map` | `map(f, xs)` | — | primitive-adjacent (drives evaluation order); pipe form `xs \|> map(f)` |
@@ -266,11 +267,17 @@ top of it entirely in Minimatic, using nothing but ordinary clause
 dispatch:
 
 ```
-fold(f: _, init: _, [])               := init
-fold(f: _, init: _, [x: _, rest: __]) := fold(f, f(init, x), rest)
+fold(f: _, init: _, [])                := init
+fold(f: _, init: _, [x: _, rest: ___]) := fold(f, f(init, x), rest)
 
 sum(xs: _list) := fold(plus, 0, xs)
 ```
+
+The cons clause uses `___` (zero-or-more), not `__` (one-or-more). With
+`__` the two clauses leave a hole: a *single*-element list matches neither,
+since `[]` requires no elements and `[x: _, rest: __]` requires at least
+two. This is worth stating because the mistake is invisible until a
+one-element list reaches the function.
 
 This is a useful design constraint to hold onto deliberately: **any
 Prelude head that can be written this way, should be** — it's the best 
