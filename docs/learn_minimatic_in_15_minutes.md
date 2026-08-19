@@ -151,7 +151,7 @@ Attributes(MyMacro) := HoldAll
 (* algebraic normalization, without making it the default  *)
 (* behavior for every function in the language.            *)
 
-Attributes(Plus) := [Flat, Orderless]
+Attributes(Plus, [Flat, Orderless])
 Plus(Plus(a, b), c)     (* automatically flattens: Plus(a, b, c) *)
 
 

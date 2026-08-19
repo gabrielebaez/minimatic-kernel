@@ -152,6 +152,10 @@ prioritize.
 - [`docs/proposal-001-dispatch-results-and-pipes.md`](docs/proposal-001-dispatch-results-and-pipes.md)
   — accepted; the current decision record for dispatch, results, and pipes,
   plus its [implementation plan](docs/proposal-001-implementation-plan.md)
+- [`docs/capabilities-and-roadmap.md`](docs/capabilities-and-roadmap.md) —
+  what the kernel actually does today, measured by running it, and what
+  comes next. Start here if you want the current picture rather than the
+  intended one
 - [`docs/learn_minimatic_in_15_minutes.md`](docs/learn_minimatic_in_15_minutes.md)
   — a narrative walkthrough of the language. Illustrative only: its code is
   in an untagged fence, so unlike [`examples/tour.md`](examples/tour.md) it
@@ -166,7 +170,7 @@ prioritize.
 
 ## Repository scope
 
-This repo owns:
+This repo owns the interpreter and nothing above it:
 
 - Lexing and parsing of Minimatic source
 - The evaluator and clause-dispatch engine
@@ -176,15 +180,6 @@ This repo owns:
 - The `Err` result type and pipeline combinators
 - The Python-facing extension API (`register_head`)
 - A minimal reference REPL for local testing (no notebook, no persistence)
-
-This repo does **not** own:
-
-- The web editor, rich-text/MD authoring, or embedded media
-- Orthogonal persistence of external symbols/expressions across sessions
-- Any server, auth, or multi-user concerns
-
-Those live in `minimatic-workbench`, which depends on this repo as its
-interpreter.
 
 ## Installation
 
