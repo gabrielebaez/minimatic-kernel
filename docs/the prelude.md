@@ -12,7 +12,7 @@ scope — this document is about what ships with the language itself.
 
 Minimatic's core language (§1–§13 of the language design doc) defines
 *how* heads behave — dispatch, patterns, attributes, rewriting, pipes,
-`Ok`/`Err`. It defines almost none of *which* heads exist. Something has
+value-or-`Err`. It defines almost none of *which* heads exist. Something has
 to provide `map`, `filter`, comparison operators, string handling, and so
 on, or the language is unusable for real work despite being fully
 specified.
@@ -34,10 +34,13 @@ privileged builtins, no special-cased dispatch. Concretely this means:
     and specificity rules by construction rather than by parallel
     Python logic that has to be kept in sync.
 - **A closed, versioned set.** The Prelude is not something users extend
-  in place — adding a clause to a Prelude head from user code goes
-  through the same ambiguity-checking as adding a clause to anything
-  else (language doc §7.2), so an incompatible addition is rejected, not
-  silently merged.
+  in place — adding a clause to a Prelude head from user code goes through
+  exactly the same dispatch machinery as adding a clause to anything else
+  (language doc §7.1). Note what that does *not* buy: since ambiguity
+  rejection was removed, a user clause simply outscores the catch-all one
+  `register_head` installs and wins silently. Clause-set sealing on first
+  dispatch is what actually keeps a Prelude head from being redefined out
+  from under its callers.
 
 ## 2. Design considerations specific to the Prelude
 
@@ -52,7 +55,7 @@ here, rather than ad hoc per-function:
    the Elixir/Ramda convention, not the Wolfram one (`Select[list,
    pred]`), and it's chosen because the pipe is Minimatic's idiomatic
    composition style (language doc §13).
-2. **`Ok`/`Err` awareness is opt-in and explicit**, per language doc §12
+2. **`Err` awareness is opt-in and explicit**, per language doc §12
    — Prelude heads that should observe `Err` values directly (rather than
    being skipped by pipe short-circuiting) are marked `ResultAware` below;
    everything else assumes it will never receive an `Err` as an argument
@@ -68,22 +71,22 @@ here, rather than ad hoc per-function:
    meta-level, not ordinary data-processing heads. This mirrors, but
    deliberately narrows, Wolfram's convention of PascalCase for
    everything.
-5. **Every predicate ends in `Q`** (`is_ok`/`is_err` are the one
-   established exception, kept for continuity with the language doc's own
-   examples) — `ListQ`, `EmptyQ`, `IntQ`. Consistent enough to guess.
+5. **Every predicate ends in `Q`** (`is_err` is the one established
+   exception, kept for continuity with the language doc's own examples) —
+   `ListQ`, `EmptyQ`, `IntQ`. Consistent enough to guess.
 
 ## 3. Arithmetic and comparison (primitive)
 
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
-| `plus` | `plus(x, y, ...)` | `Flat`, `Orderless` | `+` sugar |
+| `plus` | `plus(x, y, ...)` | `Listable` | `+` sugar |
 | `minus` | `minus(x, y)` | — | `-` sugar (binary); unary negation is `negate(x)` |
-| `times` | `times(x, y, ...)` | `Flat`, `Orderless` | `*` sugar |
+| `times` | `times(x, y, ...)` | `Listable` | `*` sugar |
 | `divide` | `divide(x, y)` | — | `/` sugar; returns `Err("DivideByZero", _)` for `y == 0` rather than raising |
 | `power` | `power(x, y)` | — | `^` sugar |
 | `mod` | `mod(x, y)` | — | `%` sugar |
 | `abs`, `floor`, `ceil`, `round` | `abs(x)` etc. | — | |
-| `min`, `max` | `min(x, y, ...)` | `Flat`, `Orderless` | |
+| `min`, `max` | `min(x, y, ...)` | — | |
 | `equal`, `not_equal` | `equal(x, y)` | — | `==`, `!=` sugar; structural equality, defined over the shared `Node` representation (kernel doc §2) |
 | `less`, `greater`, `less_eq`, `greater_eq` | `less(x, y)` | — | `<`, `>`, `<=`, `>=` sugar |
 
@@ -114,7 +117,7 @@ mechanism doesn't need special-casing per use.
 | `first` | `first(xs)` | — | `Err("EmptyList", _)` on `[]`, not a raised error. Not `[]` — an empty list is itself a legitimate element, so the two cases must stay distinguishable |
 | `rest` | `rest(xs)` | — | total: `rest([])` is `[]`. Unlike `first`, it has a sensible answer for the empty list, and making it fail would put an `Err` unwrap in every recursive traversal |
 | `append`, `prepend` | `append(xs, x)` | — | new list |
-| `concat` | `concat(xs, ys, ...)` | `Flat` | list concatenation |
+| `concat` | `concat(xs, ys, ...)` | — | list concatenation |
 | `map` | `map(f, xs)` | — | primitive-adjacent (drives evaluation order); pipe form `xs \|> map(f)` |
 | `filter` | `filter(pred, xs)` | — | |
 | `fold` | `fold(f, init, xs)` | — | left fold; the one list head every other list head in this table can plausibly be derived from |
@@ -129,7 +132,7 @@ mechanism doesn't need special-casing per use.
 | `group_by` | `group_by(f, xs)` | — | returns a `Dict` |
 | `chunk` | `chunk(n, xs)` | — | fixed-size sublists |
 | `any`, `all`, `none` | `any(pred, xs)` | — | |
-| `find` | `find(pred, xs)` | — | returns `Ok(x)` / `Err("NotFound", _)`, not a bare value — this is `ResultAware`-producing, distinguishing "found nothing" from "found a falsy value" |
+| `find` | `find(pred, xs)` | — | the element, or `Err("NotFound", _)` — the distinction survives without an `Ok` wrapper because `Err` is a distinct head, not a falsy value, so "found nothing" and "found something falsy" stay tellable apart |
 | `range` | `range(a, b)`, `range(a, b, step)` | — | function form of `a..b` |
 | `sum`, `product` | `sum(xs)` | — | derived from `fold` |
 
@@ -146,11 +149,11 @@ host-registered heads.
 |---|---|---|---|
 | `Dict` | `Dict(Rule(k, v), ...)` | — | the `{...}` literal's head |
 | `keys`, `values` | `keys(d)`, `values(d)` | — | returns `List` |
-| `key_get` | `key_get(d, k)` | — | `Ok(v)` / `Err("KeyNotFound", _)` — `d[k]` sugar instead raises for missing keys, matching list indexing's error behavior; `key_get` is the `Ok`/`Err`-returning alternative for pipelines |
+| `key_get` | `key_get(d, k)` | — | the value, or `Err("KeyNotFound", _)` — `d[k]` sugar instead raises for missing keys, matching list indexing's error behavior; `key_get` is the `Err`-returning alternative for pipelines |
 | `key_set` | `key_set(d, k, v)` | — | new dict |
 | `key_drop` | `key_drop(d, k)` | — | new dict |
 | `has_key` | `has_key(d, k)` | — | `HasKeyQ` was considered and rejected — reads worse |
-| `merge` | `merge(d1, d2, ...)` | `Flat` | right-biased on conflicting keys |
+| `merge` | `merge(d1, d2, ...)` | — | right-biased on conflicting keys |
 | `map_values`, `map_keys` | `map_values(f, d)` | — | |
 | `to_pairs`, `from_pairs` | `to_pairs(d)` | — | `Dict` ⇄ `List` of `Rule`s, for reuse of list combinators on dicts |
 
@@ -165,7 +168,7 @@ host-registered heads.
 | `replace` | `replace(s, old, new)` | — | literal substring, not pattern-based — pattern-based text rewriting should go through `/.` on a parsed/tokenized form instead, not duplicate rewrite semantics under a different name |
 | `contains`, `starts_with`, `ends_with` | `contains(s, sub)` | — | |
 | `format` | `format(template, args)` | — | placeholder-based templating; exact syntax TBD (open question, §11) |
-| `to_int`, `to_float` | `to_int(s)` | — | `Ok`/`Err`-returning, since parse failure is routine, not exceptional |
+| `to_int`, `to_float` | `to_int(s)` | — | the number, or an `Err` — parse failure is routine, not exceptional |
 
 ## 8. Functional combinators (derived)
 
@@ -280,8 +283,8 @@ going through the pipe, so `f /@ Err(...)` raises rather than skipping.
 | Head | Signature | Notes |
 |---|---|---|
 | `print` | `print(x)` | side-effecting; returns `x` unchanged so it composes in a pipe for debugging (`xs \|> print \|> map(f)`). `ResultAware`, so it can show an `Err` mid-pipeline rather than being skipped. The REPL doesn't echo a top-level `print(x)`, so the value appears once |
-| `read`, `write` | `read(path)`, `write(path, content)` | `Ok`/`Err`-returning |
-| `to_json`, `from_json` | `to_json(x)`, `from_json(s)` | `from_json` is `Ok`/`Err`-returning |
+| `read`, `write` | `read(path)`, `write(path, content)` | the contents / `Null`, or an `Err` |
+| `to_json`, `from_json` | `to_json(x)`, `from_json(s)` | `from_json` returns the value, or an `Err` |
 | `now` | `now()` | current timestamp — deliberately **not** memoized/pure; calling it twice can differ, which is worth flagging against principle 2 (determinism) — see §11.5 open question... actually §13.5 below |
 | `random` | `random()` | same non-determinism caveat as `now` |
 
@@ -338,8 +341,9 @@ an exception.
    this mean dispatch needs a "sequence-like" pattern type broader than
    `_list`/`_string` individually, or does each head just get two clauses
    (one per type)? This has real consequences for the specificity/
-   ambiguity machinery (kernel doc §6) and should be resolved before
-   implementation.
+   machinery (kernel doc §6) and should be resolved before
+   implementation. Cheaper than it looks now: two same-score clauses with
+   disjoint domains (`_list` and `_string`) already dispatch correctly.
 4. ~~**`head_of`/`args_of`** (§10) — should these exist?~~ **Closed:** yes,
    as `Head`/`Args`. See §10 for the reasoning and for why the list
    accessors became `first`/`rest`.

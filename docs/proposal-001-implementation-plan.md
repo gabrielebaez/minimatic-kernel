@@ -1,7 +1,7 @@
 # Proposal 001 — Implementation Plan
 
 **Date:** 2026-08-07
-**Status:** Phases A, B and C implemented; D and E outstanding
+**Status:** Phases A, B and C implemented; D planned in detail below; E outstanding
 **Implements:** `docs/proposal-001-dispatch-results-and-pipes.md`
 **Precondition:** the proposal is accepted. Nothing here should be built
 while §2.1 (removing ambiguity checking) is still under debate, since it is
@@ -303,25 +303,111 @@ visible rather than accidental.
 
 ## Phase D — Design docs
 
-Apply proposal §4.6 verbatim. Grouped by file, in the order that keeps the
-docs internally consistent at each step:
+**Goal:** the three design docs stop contradicting the kernel. Nothing in
+this phase changes behavior; the README currently carries a warning that it
+wins where they disagree, and that warning is a pointer to this work, not a
+substitute for it.
 
-1. **`docs/the kernel.md`** — §4 (drop `flatten`/`canonical_order` from the
-   eval sketch), §6.1 (drop the `overlaps`/`implies` block), §6.3 (delete),
-   §8 (drop `Flat`/`Orderless` examples), §9 (short-circuit predicate is
-   `is_err`), §12 (module layout: no `overlaps`/`implies`; add
-   `result.py`), §14 (close 14.1/14.2/14.3; add the nested-`score()`
-   question), §15 (revise the dispatch row).
-2. **`docs/the language.md`** — §7.1 (narrow the order claim), §7.2
-   (delete or rewrite as "how ties resolve"), §8 (remove the `$` implicit
-   lambda; decide postfix `&`), §10 (delete the `Flat`/`Orderless`
-   paragraph), §12 (rewrite every example without `Ok`; add the C0 line),
-   §13 (specify `$`), §16 (close 16.3 and 16.5).
-3. **`docs/the prelude.md`** — §3–§6 attribute columns, §11 table per
-   proposal §2.5, §13 annotated with its §4.2 prerequisite.
+### D0. What counts as wrong
 
-The `&` question in §8 is *unresolved* by the proposal. Either implement
-postfix `&` or strike it — do not leave a third orphaned form in the doc.
+The docs are wrong in two different ways, and only one gets fixed here.
+
+**Fix — features removed or changed.** Definition-time ambiguity rejection,
+`Flat`/`Orderless`, the `Ok` wrapper, `$` as an implicit lambda parameter.
+These describe a language that no longer exists.
+
+**Leave — features specified but not yet built.** Indexing (`xs[0]`),
+`Attributes(f) := ...`, `Hold`/`ReleaseHold`/`:>`, `Dict`, the string layer,
+most of the list layer. These remain the design intent, and these are design
+documents: they describe the target language, not the current kernel.
+
+**Two exceptions**, both because the audience differs:
+
+- **`docs/the kernel.md` §2.2 and §10** describe *internal representation
+  that contributors build against*, and the code actively diverges. Mark
+  these not-yet-implemented rather than leaving them to mislead someone into
+  building the wrong thing.
+- **`docs/the language.md` §8** — postfix `&` and `$`-as-implicit-parameter
+  are struck rather than left standing. `$` is not merely unbuilt, it now
+  *means something else* (the pipe placeholder), and `&` would be the third
+  orphaned lambda form in one section.
+
+### D1. `docs/the kernel.md`
+
+| § | Edit |
+|---|---|
+| 1 | "ambiguous clauses rejected as a definition-time error" → proposal §2.1's formulation; "`Ok`/`Err` values" → value-or-`Err` |
+| 2.2 | **Mark unbuilt.** Specifies a `Literal` node type and `Expr`/`Node` names; the kernel uses `Symbol`/`Expression` with raw Python atoms (`_ATOMIC_TYPES`, `eval.py:30`) and no `Literal` wrapper |
+| 2.3 | drop `Ok` from the normal-form head list |
+| 4 | drop `flatten`/`canonical_order` from the eval sketch — already absent from `eval.py` |
+| 6.1 | remove the `overlaps`/`implies`/`AmbiguousClauseError` block from `define_clause` |
+| 6.2 | the specificity table predates nested scoring; `score()` recurses into compound patterns (`e21bb42`) |
+| 6.3 | ambiguity detection — **replace the content**, do not delete the section (see D4) |
+| 8 | drop `Flat`/`Orderless` from the attribute examples; add `ResultAware` |
+| 9 | retitle off `Ok`/`Err`; §9.2's predicate is `is_err` |
+| 10 | **Mark unbuilt.** Persistent RRB-tree/HAMT `List`/`Dict`; `List` is currently an `Expression`, and `IMPLEMENTATION_PLAN.md` records why no `data.py` was built |
+| 12 | module layout: drop `overlaps()`/`implies()` and `data.py`; add `errors.py`, `markdown.py`, `prelude.py`, `registry.py`; `result.py` is `Err`, not `Ok`/`Err` |
+| 14 | close 14.1 (will not do), 14.2 (moot), 14.3 (sealed). 14.4 stays open |
+| 15 | revise the "closed, deterministic dispatch" row |
+
+### D2. `docs/the language.md`
+
+| § | Edit |
+|---|---|
+| 2 | principle 5: `Ok`/`Err` → value-or-`Err` |
+| 7.1 | narrow the claim — order is not load-bearing between *different* scores; exact ties resolve by declaration order |
+| 7.2 | "Ambiguity is an error" — rewrite as how ties resolve, per proposal §2.2 |
+| 8 | strike postfix `&` and `$`-as-implicit-parameter; `x -> ...` is the only lambda form; note multi-argument lambdas as a known gap |
+| 10 | delete the `Flat`/`Orderless` paragraph. Leave `Attributes(MyMacro) := HoldAll` standing per D0 |
+| 12 | rewrite every example without `Ok`; the `match` example's `Ok(data)` clause becomes a bare fall-through; state the `Err`-versus-exception boundary (`minimatic/result.py` has the authoritative wording) |
+| 13 | specify `$` placeholders — proposal §2.8 |
+| 16 | close 16.3 (moot) and 16.5 (answered by `$`) |
+
+### D3. `docs/the prelude.md` — mostly already done
+
+Phase C, the `Head`/`Args` rename and the nested-`score()` commit already
+corrected §4, §5, §10, §11, §12, §13 and §14. **Do not redo them.** What
+remains:
+
+- §1 and §2.2 — `Ok`/`Err` in the summary and in the `ResultAware` rule.
+- §2.5 — the `is_ok`/`is_err` naming exception; `is_ok` no longer exists.
+- §3 — drop `Flat`/`Orderless` from `plus`, `times`, `min`/`max`.
+- §5 — `concat`'s `Flat`; `find` returning `Ok(x)` → the element or
+  `Err("NotFound", _)`.
+- §6 — `merge`'s `Flat`; `key_get` returning `Ok(v)`.
+- §7 — `to_int`/`to_float` described as "`Ok`/`Err`-returning".
+
+### D4. Section numbering, and a deliberate deviation from the proposal
+
+Proposal §4.6 says to **delete** `docs/the kernel.md` §6.3. This plan says
+to **replace its content** with a short "why there is no ambiguity check"
+and keep the heading.
+
+Checked before recommending it: nothing outside this plan currently
+references kernel §6.4, so deleting §6.3 would not break a live
+cross-reference today. The reason to keep the heading anyway is cheapness of
+future auditing — the four docs already carry ~25 cross-references by
+section number (`§10`, `§7.2`, `§6.1`, `§14.4`, `§11.1`, …), and every
+deletion turns the next edit into a renumbering audit. Keeping headings
+stable costs one sentence; removing them costs a sweep each time.
+
+Note also that `docs/the language.md:286` references `§6.3` — its *own*
+§6.3, not the kernel's. Do not "fix" it.
+
+### Verification
+
+- Grep sweep across all three docs for `Ok(`, `` `Ok` ``, `Flat`,
+  `Orderless`, `overlaps`, `implies`, `AmbiguousClauseError`. Every
+  surviving hit must sit in a sentence deliberately marking the thing as
+  removed.
+- Cross-reference sweep: every `§N` reference between the four docs still
+  points at the section it names.
+- Spot-run the snippets that describe *current* behavior — the docs use
+  untagged fences so nothing executes them, which is exactly why they
+  drifted. `docs/the prelude.md` §13's `fold` is the precedent: it was
+  wrong for months and one character from working.
+- `uv run pytest` and `examples/tour.md` are unaffected — no code changes —
+  but run them to confirm that stays true.
 
 ---
 

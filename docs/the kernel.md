@@ -21,12 +21,13 @@ Those goals, from the language spec, are:
 
 - Strict, deterministic evaluation with closed, definition-time clause
   dispatch (no global mutable rule table).
-- Specificity-based dispatch, with ambiguous clauses rejected as a
-  definition-time error.
+- Specificity-based dispatch, resolved once at definition time by a
+  published static rule, never from runtime state.
 - Immutable data, always.
 - Rewriting (`Hold` / `/.` / `ReleaseHold`) that is explicit and opt-in,
   never ambient.
-- Errors represented as `Ok`/`Err` values, composed through pipelines.
+- Errors represented as values: the ordinary result on success, or an
+  `Err`, composed through pipelines.
 - Trivial extension from Python via `register_head`, with extensions being
   first-class heads rather than a bolted-on FFI layer.
 
@@ -53,6 +54,15 @@ what I expect" tend to live.
 object; it reduces a node to a normal-form node of the *same* type.
 
 ### 2.2 Node types
+
+> **Not what the kernel does.** The implementation has no `Literal` wrapper
+> and no type named `Expr`/`Node`: atoms are *raw Python values*
+> (`int`/`float`/`str`/`bool`/`None`, see `_ATOMIC_TYPES` in `eval.py`), and
+> the expression type is `Expression`, a `tuple` subclass holding
+> `(head, tail)`. Everything below still describes the intended shape
+> faithfully — one tree type, atoms distinguishable from applications — but
+> read `Literal(x)` as "the bare value `x`" and `Expr` as `Expression`
+> before building against it.
 
 ```python
 class Symbol:
@@ -83,9 +93,9 @@ All surface syntax desugars into this before evaluation ever runs:
 ### 2.3 Values are just un-reduced-further expressions
 
 There is no separate `Value` type. A "value" is an `Expr` whose head the
-evaluator recognizes as already in normal form (`List`, `Dict`, `Ok`,
-`Err`, a closure marker, etc.), or a `Literal`. This has two consequences
-that matter architecturally:
+evaluator recognizes as already in normal form (`List`, `Dict`, `Err`, a
+closure marker, etc.), or a `Literal`. This has two consequences that
+matter architecturally:
 
 - `Hold(expr)` is a zero-cost operation — it stores the node as-is, with no
   serialization or reconstruction.
@@ -165,10 +175,8 @@ def eval(node: Node, env: Env) -> Node:
                 for i, a in enumerate(args)
             ]
 
-            if Attr.FLAT in attrs:
-                eval_args = flatten(head_val, eval_args)
-            if Attr.ORDERLESS in attrs:
-                eval_args = canonical_order(eval_args)
+            if Attr.LISTABLE in attrs:
+                eval_args = thread_over_lists(eval_args)
 
             return fn.apply(eval_args, env)   # dispatch happens inside apply()
 ```
@@ -230,26 +238,12 @@ This is the highest-risk part of the kernel and is given its own module
 def define_clause(registry, head_name, pattern, body):
     clause = Clause(pattern, body, specificity=score(pattern))
     clauses = registry.get(head_name, ClauseSet())
-
-    for existing in clauses:
-        if (
-            overlaps(existing.pattern, pattern)
-            and existing.specificity == clause.specificity
-            and not implies(existing.pattern, pattern)
-            and not implies(pattern, existing.pattern)
-        ):
-            raise AmbiguousClauseError(head_name, existing, clause)
-
-    clauses.insert_sorted(clause)   # descending specificity
-    registry.set(head_name, clauses)
+    clauses.insert_sorted(clause)   # descending specificity, ties keep
+    registry.set(head_name, clauses)   # declaration order
 ```
 
-All of the following are resolved once, here, and never revisited at call
-time:
-
-- Where the new clause sits in specificity order relative to existing
-  clauses.
-- Whether it is ambiguous with any existing clause.
+One thing is resolved once, here, and never revisited at call time: where
+the new clause sits in specificity order relative to the existing ones.
 
 ### 6.2 Specificity scoring
 
@@ -259,31 +253,46 @@ lexicographically across a clause's full parameter list:
 | Pattern shape | Relative specificity |
 |---|---|
 | Literal (`5`, `"hi"`) | highest |
+| Compound (`Err(k, d)`, `[a, b]`) | highest tier, compared by its arguments |
 | Typed blank (`_int`) | middle |
-| Bare blank (`_`) | low |
+| Bare blank (`_`), bare binding symbol | low |
 | Sequence blank (`__`, `___`) | lowest, and affects arity comparison |
 
-### 6.3 Ambiguity detection
+Scoring **recurses into compound patterns**, comparing their arguments
+structurally, so `Err("IOError", d: _)` strictly outranks
+`Err(k: _, d: _)`. Without that recursion the two would tie and the more
+specific clause would win only if it happened to be declared first — a
+silently wrong answer rather than a rejected definition, which matters
+because §6.3 no longer rejects anything.
 
-Two clauses with tied specificity scores are only truly ambiguous if their
-domains actually overlap. `5` and `"hi"` are both literals (equal
-specificity) but disjoint — no ambiguity, because only one could ever match
-a given call. The check is therefore:
+Only clauses that are equally specific *all the way down* fall through to
+declaration order.
 
-```
-ambiguous(p1, p2) :=
-    overlaps(p1, p2) AND score(p1) == score(p2)
-    AND NOT implies(p1, p2) AND NOT implies(p2, p1)
-```
+### 6.3 Why there is no ambiguity check
 
-This is intentionally the most heavily tested piece of the kernel. A false
-positive here (rejecting genuinely disjoint clauses as ambiguous) is worse
-for usability than a missed ambiguity would be for safety, since it is the
-one static check standing between the language's safety guarantee and a
-user's ability to define straightforward, non-overlapping clause sets.
-Error messages from this check should identify *which* two clauses
-conflict and on *which* argument position, not just report "ambiguous
-definition."
+Earlier drafts of this document specified `overlaps()`/`implies()` and an
+`AmbiguousClauseError`, rejecting two clauses that could both match some
+value when neither was more specific. **That check was removed from the
+design, not merely deferred** — see
+`docs/proposal-001-dispatch-results-and-pipes.md` §2.1.
+
+The short reason: it is undecidable in practice over the pattern grammar
+the language actually has (nested compound patterns, sequence blanks with
+variable arity, type tags), and a conservative overlap test over those
+degenerates toward "everything overlaps everything" — which fails
+*legitimate* clause sets, the one outcome this document previously argued
+was worse than a missed ambiguity.
+
+What replaces it: dispatch order is a pure function of
+the clause set, fixed at definition time by a published static rule
+(descending `score()`, then declaration order), never dependent on runtime
+state or call history. Silent shadowing is possible; silent *nondeterminism*
+is not.
+
+If the safety story needs shoring up later, the recovery path is a
+non-fatal lint — a definition-time warning, or an error only under an opt-in
+strict mode — which can be added without changing what any existing program
+means, precisely because the tie-break is specified rather than accidental.
 
 ### 6.4 Call-time dispatch
 
@@ -295,10 +304,10 @@ def apply(clause_set, args, env):
     raise NoMatchingClauseError(clause_set.head_name, args)
 ```
 
-Because sorting and ambiguity-checking are fully paid for at definition
-time, call-time dispatch is a linear scan for the first structural match —
-no re-scoring, no re-validation. This is what preserves "ordinary
-function-call speed" for the common case.
+Because sorting is fully paid for at definition time, call-time dispatch is
+a linear scan for the first structural match — no re-scoring, no
+re-validation. This is what preserves "ordinary function-call speed" for the
+common case.
 
 ---
 
@@ -341,23 +350,24 @@ special-casing is needed for "data" versus "code."
 
 ## 8. Attributes
 
-A flat table, consulted by both `eval` (hold behavior, `Flat`,
-`Orderless`) and `define_clause` (attributes are fixed at definition
-time):
+A flat table, consulted by both `eval` (hold behavior, `Listable`
+threading, `ResultAware` short-circuiting) and `define_clause` (attributes
+are fixed at definition time):
 
 ```python
-registry.attributes["Plus"] = {Attr.FLAT, Attr.ORDERLESS}
+registry.attributes["plus"] = {Attr.LISTABLE}
 registry.attributes["MyMacro"] = {Attr.HOLD_ALL}
+registry.attributes["catch"] = {Attr.RESULT_AWARE}
 ```
 
 Redefining a head's attributes after clauses already exist for that head
-should itself be a definition-time error, for the same reason ambiguous
-clauses are: attribute-dependent behavior (what gets held, what gets
-flattened) must not change silently underneath already-defined clauses.
+should itself be a definition-time error: attribute-dependent behavior
+(what gets held, what threads over lists, what may receive an `Err`) must
+not change silently underneath already-defined clauses.
 
 ---
 
-## 9. `Ok` / `Err` and the pipe
+## 9. `Err` and the pipe
 
 Failure propagation through `|>` needs an explicit mechanism rather than
 being an implicit property every function must individually implement.
@@ -377,17 +387,39 @@ def eval_pipe(lhs_val: Node, fn_head: Symbol, env: Env) -> Node:
     return apply_head(fn_head, [lhs_val], env)
 ```
 
-Only heads explicitly marked `ResultAware` — `catch`, `recover`, `match`,
-`finally`, `unwrap`, `unwrap_err`, `is_ok`, `is_err` — are permitted to
-receive an `Err` value directly. Every other function downstream of a
-failure in a pipeline is automatically skipped. This keeps ordinary
-builtins and user functions (`parse_json`, `process`, ...) from needing a
-hand-written `Err`-passthrough clause, which would otherwise be required
-boilerplate on every function ever written for use in a pipeline.
+Success is the value itself — there is no `Ok` wrapper — so `is_err` is the
+whole test. Only heads explicitly marked `ResultAware` are permitted to
+receive an `Err` value directly: the combinators (`catch`, `recover`,
+`finally`, `unwrap`, `unwrap_err`, `is_err`) and the inspectors (`print`,
+`Head`, `Args`), without which a failing pipeline could not be debugged or
+examined. Every other function downstream of a failure is skipped. This
+keeps ordinary builtins and user functions (`parse_json`, `process`, ...)
+from needing a hand-written `Err`-passthrough clause, which would otherwise
+be required boilerplate on every function ever written for a pipeline.
+
+Two ordering constraints, learned in implementation: the check must run
+**before** a `Lambda` right-hand side is applied — a lambda has no head, so
+it is never `ResultAware`, and handing it an error it cannot recognise is
+the trap — and **before** `$` template substitution, so a skipped pipe does
+not evaluate the template's other arguments.
+
+Note the pipe is what short-circuits, not the call: `f(Err(...))` invokes
+`f`. `/@` desugars straight to `map(xs, f)` without passing through
+`__pipe__`, so it does not short-circuit either.
 
 ---
 
 ## 10. Immutable data representation
+
+> **Not yet implemented.** `List` is currently an ordinary `Expression`
+> headed by `Symbol("List")` — tuple-backed, immutable by construction, and
+> its own normal form. There is no `data.py` and no persistent vector; a
+> dedicated `List` type was tried and dropped because it added a second
+> representation for one value and a conversion boundary of exactly the kind
+> §2.1 argues against (`IMPLEMENTATION_PLAN.md` records the reasoning).
+> `Dict` does not exist at all yet. The design below remains the intended
+> destination, and the argument for it still holds — it is the *when*, not
+> the *whether*, that is open.
 
 "Every update returns a new value" (§1) must not mean "every update is
 O(n)." Native Python `list`/`dict`, copied on every operation, would make
@@ -426,35 +458,48 @@ def register_head(name, fn, attributes=()):
 ### 11.1 No privileged builtins
 
 If a builtin is registered with a permissive catch-all pattern and a user
-later adds a more specific clause under the same head name, dispatch and
-ambiguity-checking (§6) treat this exactly as they would two user-defined
-clauses — there is no special-cased "builtins always win" or "builtins are
-sealed" rule. This symmetry is what makes `register_head` a first-class
-extension mechanism rather than an override hook bolted onto the side of
-the dispatcher, and it directly satisfies the "trivially extensible"
-design goal from §1: a Python function registered this way *is* a head,
-subject to the same specificity and ambiguity rules as everything else.
+later adds a more specific clause under the same head name, dispatch (§6)
+treats this exactly as it would two user-defined clauses — there is no
+special-cased "builtins always win" or "builtins are sealed" rule. This
+symmetry is what makes `register_head` a first-class extension mechanism
+rather than an override hook bolted onto the side of the dispatcher, and it
+directly satisfies the "trivially extensible" design goal from §1: a Python
+function registered this way *is* a head, subject to the same specificity
+rules as everything else.
+
+One consequence is sharper now that §6.3 rejects nothing: a user clause on
+a prelude head outscores the catch-all sequence blank `register_head`
+installs (score `0`), and wins silently. Sealing (§14.3) is the only thing
+standing between that and accidental redefinition.
 
 ---
 
-## 12. Proposed module layout
+## 12. Module layout
 
 ```
 minimatic/
-  ast/            # Node, Symbol, Literal, Expr, pattern node types
+  ast/            # Symbol, Expression, atoms, pattern node types
   lexer.py
-  parser.py       # syntax -> Node tree; no semantic work
+  parser.py       # syntax -> tree; no semantic work
   eval.py         # core loop (§4)
-  dispatch.py     # ClauseSet, score(), overlaps(), implies(), define_clause() (§6)
+  dispatch.py     # ClauseSet, score(), Clause (§6)
   match.py        # match() — shared by dispatch.py and rewrite.py (§5)
-  rewrite.py      # Hold / ReleaseHold / replace_all / Rule (§7)
+  rewrite.py      # replace_all / Rule (§7); Hold/ReleaseHold not yet built
   attributes.py   # attribute table (§8)
-  result.py       # Ok/Err, __pipe__, catch/recover/match/finally (§9)
-  data.py         # persistent List/Dict (§10)
+  result.py       # Err and the value/exception boundary (§9)
+  registry.py     # head name -> ClauseSet + attributes
+  prelude.py      # the built-in heads, including __pipe__ and the combinators
   extend.py       # register_head (§11)
   env.py          # lexical scope, closures
-  kernel.py       # Kernel: wires registry + env + eval into eval(source) -> Node
+  errors.py       # the MinimaticError hierarchy
+  markdown.py     # ```minimatic fenced blocks out of a .md file
+  kernel.py       # Kernel: wires registry + env + eval into eval(source)
 ```
+
+No `data.py` — see §10. The pipe and the result combinators live in
+`prelude.py` as ordinary registered heads rather than in `result.py`, which
+holds only the `Err` constructor and the line between error *values* and
+kernel *exceptions*.
 
 The dependency direction `dispatch.py` → `match.py` ← `rewrite.py`, with no
 edge between `dispatch.py` and `rewrite.py` directly, is the structural
@@ -482,42 +527,47 @@ inheriting from prior art.
 
 ## 14. Open design questions
 
-These are unresolved at the architecture level and should be settled
-before the corresponding modules are considered stable:
+Numbering is kept stable so existing cross-references stay valid; settled
+questions are struck rather than removed.
 
-1. **Ambiguity-check completeness.** `overlaps`/`implies` need to handle
-   nested compound patterns (e.g. `List(_int, __)` vs `List(__, _int)`),
-   not just flat blanks. The algorithm's behavior on deeply nested or
-   recursive patterns is not yet specified.
-2. **`Flat`/`Orderless` interaction with dispatch.** If a head is both
-   `Orderless` and has multiple clauses, does specificity scoring happen
-   before or after canonicalization? This affects both `score()` and
-   `overlaps()`.
-3. **Redefinition semantics.** Can a `ClauseSet` be extended after first
-   use (e.g. in a live notebook adding a clause to a previously-called
-   function), or are clause sets sealed after first dispatch? This has
-   direct consequences for `minimatic-workbench`'s persistence model.
+1. ~~**Ambiguity-check completeness.**~~ **Closed — will not do.** The
+   check was removed from the design (§6.3, proposal 001 §2.1). Nested
+   compound patterns are instead handled by `score()` recursing into them
+   (§6.2).
+2. ~~**`Flat`/`Orderless` interaction with dispatch.**~~ **Closed — moot.**
+   Both attributes were removed from the language (proposal 001 §2.3), so
+   there is no canonicalization step to order relative to scoring.
+3. ~~**Redefinition semantics.**~~ **Closed.** Clause sets are sealed on
+   first dispatch; a later `define` raises `HeadAlreadySealedError`. Note
+   this is now the *only* structural guard against surprise redefinition,
+   since (1) is gone — it carries weight it was not originally carrying
+   alone.
 4. **Error identity through `Hold`.** If evaluation inside a delayed rule
    RHS (`:>`) raises rather than returning `Err`, does that propagate as a
-   kernel exception or get coerced to `Err`? The spec's "errors are
-   values" goal suggests the latter, but this isn't yet enforced anywhere
-   in the evaluator.
+   kernel exception or get coerced to `Err`? Still open, and deferred along
+   with `Hold` itself. `minimatic/result.py` now draws the general line —
+   routine failure is a value, programming errors stay exceptions — which
+   is the frame this question should be answered in.
+5. **Recursion depth.** There is no tail-call elimination, so
+   Minimatic-level recursion inherits Python's stack limit and
+   `RecursionError` escapes `MinimaticError` entirely. Self-hosted list
+   code caps out in the low hundreds of elements. Newly open; see
+   `docs/capabilities-and-roadmap.md` §3.2.
 
 ---
 
 ## 15. Summary
 
 The tree walker is organized so that each stated design goal in §1
-corresponds to a specific structural boundary in the code, not a
-convention contributors have to maintain by discipline:
+corresponds to a specific structural boundary in the code:
 
 | Design goal | Structural mechanism |
 |---|---|
-| Closed, deterministic dispatch | `dispatch.py` resolves order/ambiguity once, at definition time |
+| Closed, deterministic dispatch | `dispatch.py` resolves clause order once, at definition time, by a published static rule |
 | No hidden rewriting | `rewrite.py` has no inbound calls from `eval.py` except via `Hold`/`ReleaseHold`/`/.` |
-| Immutable data | Persistent `List`/`Dict` backing structures, not copy-on-write Python containers |
+| Immutable data | `Expression` is a frozen tuple; every "update" head returns a new value (persistent backing structures still to come, §10) |
 | Errors as values | `__pipe__` desugaring + `ResultAware` attribute, not per-function boilerplate |
-| First-class extension | `register_head` clauses share the same `ClauseSet`/ambiguity machinery as user clauses |
+| First-class extension | `register_head` clauses share the same `ClauseSet`/dispatch machinery as user clauses |
 
 Getting the tree walker right — especially §6 (dispatch) and §7
 (rewriting) — is what will make or break whether a future bytecode

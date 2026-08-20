@@ -40,8 +40,8 @@ the resolution is stated explicitly rather than left implicit.
    rewriting) is a deliberate, opt-in language construct — never something
    that happens invisibly behind an ordinary function call.
 5. **Failure is a value, not a control-flow event.** Operations that can
-   fail return `Ok`/`Err`; failure is composed through pipelines, not
-   thrown and caught.
+   fail return their ordinary result, or an `Err`; failure is composed
+   through pipelines, not thrown and caught.
 6. **The host language is not a separate tier.** A Python function
    registered with the runtime becomes a real head — subject to the same
    pattern dispatch, attributes, and specificity rules as anything written
@@ -160,31 +160,47 @@ describe("hi")    (* "a string" *)
 
 Clauses are tried most-specific-first: a literal pattern beats a typed
 blank, which beats a bare blank, regardless of the order the clauses were
-written in. Writing clauses most-specific-first is idiomatic, but it is
-never semantically load-bearing — reordering the three clauses above does
-not change `describe`'s behavior.
+written in. Reordering the three clauses above does not change
+`describe`'s behavior, because their specificities differ.
+
+Specificity is compared at **every depth**, so a compound pattern is ranked
+by its arguments too: `Err("IOError", d: _)` beats `Err(k: _, d: _)`
+wherever each is written. Only clauses that are equally specific all the way
+down fall through to declaration order — see §7.2.
 
 **Rationale:** declaration-order dispatch (as in Erlang/Elixir's
 first-matching-clause semantics) means a function's behavior can change
 depending on the textual order clauses happen to appear in — harmless in a
 small function, a real source of confusion once a clause set grows or is
 authored by more than one person. Specificity ordering removes order as a
-variable in the function's meaning entirely.
+variable wherever the clauses differ in specificity at all.
 
-### 7.2 Ambiguity is an error, not a resolved-by-convention case
+### 7.2 Exact ties resolve by declaration order
 
-If two clauses could both match some value and neither is more specific
-than the other, this is rejected as an error **when the second clause is
-defined**, not resolved silently by whichever rule the dispatcher happens
-to apply (e.g. "first defined wins").
+If two clauses are equally specific *and* their domains overlap, the
+first-defined one wins. This is the specification, not a gap.
 
-**Rationale:** this is the direct fix for Wolfram Language's most common
-practical footgun — accidentally shadowing or being shadowed by another
-rule with no warning. Minimatic trades a small amount of friction at
-definition time (occasionally being told two clauses are ambiguous when a
-human could see they weren't *really* meant to overlap) for the guarantee
-that no function's behavior can be a silent surprise determined by
-definition order.
+An earlier version of this section promised the opposite: that such a pair
+would be **rejected as an error** when the second clause was defined. That
+check was removed from the language — see
+`docs/proposal-001-dispatch-results-and-pipes.md` §2.1 for the full
+reasoning. In short, deciding whether two patterns really overlap is
+undecidable in practice over the grammar Minimatic actually has, and a
+conservative approximation rejects legitimate clause sets, which is worse
+than the problem it solves.
+
+What the language guarantees instead:
+
+> Dispatch order is a pure function of the clause set, fixed once at
+> definition time by a published static rule — descending specificity, then
+> declaration order. It never depends on runtime state, call history, or a
+> global mutable rule table.
+
+That is a smaller claim than "no clause can be silently shadowed", and it
+is the honest one. Shadowing is possible; a function meaning two different
+things at two different moments is not. **The practical consequence:
+declaration order *is* meaningful between clauses of equal specificity —
+reordering two such clauses changes behavior.**
 
 ### 7.3 Sequence patterns
 
@@ -205,18 +221,33 @@ literal or typed blank for the same position.
 ## 8. Lambdas
 
 ```
-square($) := $ * $
-map(square, [1, 2, 3])       (* [1, 4, 9] *)
+double = x -> x * 2
+map([1, 2, 3], double)        (* [2, 4, 6] *)
 
-(x -> x * 2)&                 (* explicit, named-argument lambda *)
 filter(x -> x > 2, myList)
 ```
 
-`$` is shorthand for a single implicit lambda parameter; `x -> ...` is the
-named form used wherever a lambda is passed as a value (`map`, `filter`,
-rewrite-rule RHSs, `catch`/`recover` handlers). Both forms produce the same
-underlying `Lambda` expression — there is no semantic difference, only
-notational convenience for the common single-parameter case.
+`x -> ...` is the one lambda form. It is used wherever a function is passed
+as a value — `map`, `filter`, rewrite-rule right-hand sides,
+`catch`/`recover` handlers.
+
+Two forms this section used to describe are gone. An implicit-parameter
+lambda spelled `$` (`square($) := $ * $`) conflicts with `$`'s meaning as
+the pipe's argument placeholder (§13), which is the one meaning it now has.
+A postfix `&` delimiter (`(x -> x * 2)&`) was never implemented and has
+nothing left to delimit.
+
+**Known gap: lambdas take exactly one parameter.** `(a, b) -> a + b` is a
+syntax error. A *named* two-argument head works fine as a callback, so a
+two-argument function must be given a name first:
+
+```
+combine(a: _, b: _) := a * 10 + b
+fold([1, 2, 3], combine, 0)   (* 123 *)
+```
+
+This is a limitation of the current kernel, not a design decision — see
+`docs/capabilities-and-roadmap.md` §3.1.
 
 ## 9. Patterns, and where they're allowed to appear
 
@@ -256,13 +287,18 @@ functions and to Python-registered heads — there is exactly one hold
 mechanism in the language, not a builtin-only special case plus a
 separate, weaker facility for everyone else.
 
-**`Flat`** and **`Orderless`** are separate, also opt-in attributes for
-heads that should behave algebraically — `Plus(Plus(a, b), c)`
-auto-flattening to `Plus(a, b, c)` under `Flat`, or argument order not
-mattering for equality/dispatch purposes under `Orderless`. These are
-attributes a head *opts into*, not a default the language imposes on every
-function — most functions are neither flat nor orderless, and shouldn't
-be treated as such.
+**`Listable`** is a separate, also opt-in attribute: a head carrying it
+threads over `List` arguments, so `plus([1, 2, 3], 10)` is `[11, 12, 13]`.
+**`ResultAware`** marks the few heads permitted to receive an `Err` through
+a pipe instead of being skipped (§12).
+
+Minimatic previously specified two further attributes, `Flat` and
+`Orderless`, for heads meant to behave algebraically — associativity and
+commutativity respectively. **Both were removed from the language**
+(`docs/proposal-001-dispatch-results-and-pipes.md` §2.3): their only real
+payoff is pattern matching over arithmetic trees, which belongs to the
+symbolic-rewriting layer (§11), and variadic arity and ordinary evaluation
+of `1 + 2 + 3` never depended on them.
 
 ## 11. Rewriting: explicit, not ambient
 
@@ -314,8 +350,11 @@ program.
 
 ## 12. Errors are values
 
+**Success is the value itself. There is no `Ok` wrapper.** Failure is an
+`Err(kind, detail)` expression.
+
 ```
-read("file.txt")                     (* Ok(content) or Err("IOError", "...") *)
+read("file.txt")                     (* the contents, or Err("IOError", "...") *)
 
 read("file.txt") |> parse_json |> process
 (* if any step fails, the pipeline short-circuits with that Err *)
@@ -323,27 +362,50 @@ read("file.txt") |> parse_json |> process
 read("file.txt") |> catch("IOError", e -> default_file)
 read("file.txt") |> recover(e -> fallback)
 
-match(read("file.txt"), [
-    Ok(data)          -> process(data),
-    Err("IOError", _) -> create_file(),
-    Err("Timeout", _) -> retry()
-])
-
 read("file.txt") |> finally(file -> close(file))
 read("file.txt") |> unwrap(default_value)
-read("file.txt") |> is_ok()
 read("file.txt") |> is_err()
 read("file.txt") |> unwrap_err()
 ```
 
-`Ok`/`Err` are ordinary expressions, matched and destructured with the
-same pattern grammar as everything else (§9) — `Err("IOError", _)` in a
-`match` clause is not special syntax, it's a pattern against an `Err`
-expression's arguments. Failure propagates through `|>` automatically: a
-function downstream of an `Err` in a pipeline is skipped rather than
-called, unless it is one of the small set of functions
-(`catch`/`recover`/`match`/`finally`/`unwrap*`/`is_ok`/`is_err`) meant to
-actually observe error values.
+`Err` is an ordinary expression, matched and destructured with the same
+pattern grammar as everything else (§9). Dispatching on error kind is the
+idiomatic form, and clause order does not matter — specificity is compared
+into the pattern (§7.1):
+
+```
+handle(Err("IOError", d: _)) := create_file()
+handle(Err("Timeout", d: _)) := retry()
+handle(Err(k: _, d: _))      := give_up(k)
+handle(data: _)              := process(data)     (* success: a bare value *)
+```
+
+Because success is unwrapped, an ordinary function applied through the pipe
+already transforms a successful value, and a function that itself returns
+value-or-`Err` already chains. No lifting combinators (`map_ok`,
+`and_then`) are needed, and none exist.
+
+Failure propagates through `|>` automatically: a function downstream of an
+`Err` is skipped rather than called, unless it carries `ResultAware` —
+the combinators above, plus `print`/`Head`/`Args`, so a failing pipeline
+can still be inspected. Note it is the **pipe** that short-circuits, not the
+call: `f(Err(...))` invokes `f`.
+
+### 12.1 What is *not* an `Err`
+
+`Err` is for **expected, routine failure**: a file that isn't there, a
+parse that doesn't parse, division by zero, the first element of an empty
+list.
+
+Programming errors stay **exceptions**: calling a head that doesn't exist,
+passing a string where a list is required, getting the argument count
+wrong. These are not routine outcomes to be composed — they are mistakes to
+be reported.
+
+The line matters more than where exactly it falls. Without it every mistake
+becomes a value that drifts quietly down a pipeline and surfaces, if at all,
+far from its cause — and the language loses the ability to tell you that you
+wrote something wrong.
 
 **Rationale:** principle 5 (failure as a value) is chosen over exceptions
 specifically because "everything is an expression" (principle 1) leaves no
@@ -368,6 +430,33 @@ transformation sequence and is used pervasively in the language's own
 examples for exactly that reason — it reads in the order operations
 happen, left to right, which head-first nested calls (`f(g(h(x)))`)
 do not.
+
+### 13.1 `$` — putting the subject somewhere else
+
+First position is only the default. `$` marks where the piped value should
+land instead:
+
+```
+[1, 2, 3] |> fold(plus, 0)        (* 6  — the subject goes first *)
+2 |> minus(10, $)                 (* 8  — minus(10, 2) *)
+2 |> plus(1, times($, 10))        (* 21 — any depth *)
+3 |> plus($, $)                   (* 6  — every occurrence *)
+```
+
+The rules:
+
+- **No `$` anywhere** — first-position splice, as above.
+- **Any `$`** — substitution at every occurrence, at any depth. First-position
+  splicing is *not* also applied.
+- The subject is evaluated **exactly once**, however many times `$` appears.
+- A `$` inside a **nested pipe's right-hand side** belongs to that inner
+  pipe, not the outer one. The inner pipe's left-hand side is ordinary
+  ground and is substituted normally.
+- A `$` in a `Lambda` right-hand side (`a |> (x -> $ + x)`) is not
+  substituted — there the lambda *is* the function being applied, so `$` is
+  just an unbound symbol.
+
+`$` has no other meaning in the language; see §8.
 
 `//`, borrowed from the Wolfram Language, is a second spelling of the same
 operator: `a // f` desugars identically to `a |> f`, splices multi-argument
@@ -438,18 +527,23 @@ that it doesn't.
    yet beyond literals — whether string processing is a small built-in
    vocabulary or expected to live entirely in registered Python heads is
    open.
-3. **Equality and ordering under `Orderless`.** §10 states that
-   `Orderless` heads shouldn't care about argument order, but the exact
-   canonicalization rule (what determines canonical order across mixed
-   types) isn't yet specified.
+3. ~~**Equality and ordering under `Orderless`.**~~ **Closed — moot.**
+   `Orderless` was removed from the language (§10), so there is no
+   canonical order to specify.
 4. **Scoping of `Hold`-captured free variables.** If a `Hold`-ed expression
    references a name bound in an enclosing scope, and that name is
    rebound before `ReleaseHold` runs, which binding does the release see?
    This interacts with §5 (rebinding is not mutation) and needs an
    explicit answer before rewriting semantics can be considered settled.
-5. **Multi-argument pipe semantics.** `a |> f(b, c)` — does `a` become the
-   first argument, and is that position configurable per-head, or fixed?
-   Not yet specified.
+5. ~~**Multi-argument pipe semantics.**~~ **Closed.** `a` takes first
+   position by default, and `$` places it anywhere instead — §13.1.
+6. **Multi-parameter lambdas.** `(a, b) -> ...` does not parse (§8). The
+   syntax is uncontroversial; what needs deciding is whether it also brings
+   pattern-matched lambda parameters (`(x: _int, y: _) -> ...`) or stays
+   bare-name-only. Newly open.
+
+Numbering is kept stable so cross-references stay valid; settled questions
+are struck rather than removed.
 
 These are primarily language-semantics questions, independent of the
 tree-walker implementation strategy, and should be resolved here — in the
