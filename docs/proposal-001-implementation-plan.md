@@ -1,7 +1,7 @@
 # Proposal 001 — Implementation Plan
 
 **Date:** 2026-08-07
-**Status:** Phases A, B and C implemented; D planned in detail below; E outstanding
+**Status:** Complete — all five phases implemented
 **Implements:** `docs/proposal-001-dispatch-results-and-pipes.md`
 **Precondition:** the proposal is accepted. Nothing here should be built
 while §2.1 (removing ambiguity checking) is still under debate, since it is
@@ -21,16 +21,19 @@ is the removal of something never built. What remains is:
 | A | Remove `Flat`/`Orderless`; correct stale docstrings — **done** | none |
 | B | Multi-arg pipe `$` templates (§2.8) — **done** | additive only |
 | C | `Value`/`Err` (§2.5) — **done** | new heads + failable prelude heads stop raising |
-| D | Design-doc rewrite (§4.6) | none |
-| E | `README.md` + `IMPLEMENTATION_PLAN.md` reconciliation | none |
+| D | Design-doc rewrite (§4.6) — **done** | none |
+| E | `README.md` + `IMPLEMENTATION_PLAN.md` reconciliation — **done** | none |
 
 Phases A/B/C are independent and can be done in any order or in parallel;
 D and E should land last, once the code they describe exists.
 
-**Explicitly out of scope:** the nested `score()` fix (proposal §4.2). It is
-newly open, it is *not* part of adopting this proposal, and it deserves its
-own proposal. Do not fold it in opportunistically — it changes dispatch
-outcomes for existing programs, which nothing else in this plan does.
+**Originally out of scope:** the nested `score()` fix (proposal §4.2), on
+the grounds that it changes dispatch outcomes for existing programs, which
+nothing else here does. It was nonetheless done — as its own commit
+immediately *before* Phase C rather than folded into it, because Phase C
+makes error-kind dispatch the primary idiom and that is exactly what the
+flat scoring got wrong. The separation the caution asked for was kept; the
+sequencing changed.
 
 ---
 

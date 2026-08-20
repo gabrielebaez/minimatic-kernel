@@ -4,9 +4,15 @@ Errors - Exception hierarchy for the Minimatic kernel.
 All kernel-raised errors derive from MinimaticError so host code can catch
 "any Minimatic problem" with a single except clause.
 
-Note: AmbiguousClauseError is intentionally absent. The MVP dispatch engine
-(see minimatic/dispatch.py) does not detect clause ambiguity yet — see
-IMPLEMENTATION_PLAN.md.
+Note: AmbiguousClauseError is intentionally absent, and permanently so.
+Definition-time ambiguity rejection was removed from the language rather
+than deferred — overlapping clauses of equal specificity resolve by
+declaration order instead. See minimatic/dispatch.py and
+docs/proposal-001-dispatch-results-and-pipes.md §2.1.
+
+The boundary between these exceptions and `Err` *values* is drawn in
+minimatic/result.py: routine failure is a value, programming errors are
+exceptions.
 """
 
 from __future__ import annotations

@@ -161,12 +161,17 @@ prioritize.
   in an untagged fence, so unlike [`examples/tour.md`](examples/tour.md) it
   is never executed and never tested
 
-> These four documents **predate proposal 001** and still present ambiguity
-> detection, `Flat`/`Orderless`, `Hold`/`ReleaseHold`/`:>`, and `Ok`/`Err`
-> as current — the first two were removed, the third is deferred, and the
-> fourth became value-or-`Err`. Where they and this README disagree, the
-> README and the proposal are right. Reconciling them is Phase D of the
-> implementation plan.
+The three design docs have been reconciled with proposal 001 and describe
+the language as it now stands. They remain *design* documents: where they
+specify something not yet built — indexing, `Attributes(f) := …`,
+`Hold`/`ReleaseHold`, `Dict`, the string layer — they describe the
+intended language, and `docs/capabilities-and-roadmap.md` is the record of
+which parts exist today.
+
+> **Except the 15-minute walkthrough**, which still predates proposal 001:
+> it teaches `Flat`/`Orderless` (removed), `Hold` (deferred), and `Ok`
+> (replaced by value-or-`Err`). Nothing executes it, so nothing catches the
+> drift — read it for shape, not for detail.
 
 ## Repository scope
 

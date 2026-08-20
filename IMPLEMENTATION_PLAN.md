@@ -1,8 +1,21 @@
 # Minimatic Kernel — MVP Implementation Plan
 
 **Date:** 2026-07-30
-**Status:** MVP implemented — both flagship examples pass end-to-end (69 tests green)
+**Status:** **Historical.** MVP implemented and complete (69 tests green at
+the time). Superseded for everything after the MVP milestone.
 **Scope:** `minimatic-kernel` — MVP tree-walker interpreter for Minimatic
+
+> **Read this as a record, not as current documentation.** It describes what
+> the MVP was and why, including decisions later reversed: it calls
+> ambiguity checking and `Flat`/`Orderless` "deferred" when both were
+> subsequently **removed from the language**, registers `head`/`tail` where
+> the kernel now has `first`/`rest`, and predates `Err`, `$` pipe
+> placeholders, `Head`/`Args` and nested `score()`.
+>
+> For current state:
+> [`docs/capabilities-and-roadmap.md`](docs/capabilities-and-roadmap.md).
+> For the decisions that superseded this:
+> [`docs/proposal-001-dispatch-results-and-pipes.md`](docs/proposal-001-dispatch-results-and-pipes.md).
 
 > This document was written before implementation started, then updated
 > afterward with a short "What changed during implementation" note per
@@ -649,14 +662,36 @@ minimatic> [1, "N/A", 3, "N/A", 5] |> map(x -> x /. "N/A" -> 0) |> fold(plus, 0)
 
 ## Explicitly out of scope for MVP (post-MVP backlog)
 
-- `overlaps()` / `implies()` ambiguity detection, `AmbiguousClauseError`
-- `Flat` / `Orderless` attributes and canonicalization
-- `Hold` / `ReleaseHold` with lexical env-snapshot capture; `:>` (`RuleDelayed`)
-- `Ok`/`Err` result type and combinators (`catch`, `recover`, `finally`, `unwrap`, `map_ok`, `and_then`), pipe short-circuiting
-- `Dict` and its derived operations
-- Self-hosting derived prelude (functional combinators, `sort_by`, `group_by`, etc.)
-- Performance/benchmarking
-- Comprehensive ambiguity test matrix (only relevant once ambiguity detection exists)
+*Annotated after the fact.* This list originally read as one backlog of
+deferrals. It was not: some items were later **removed from the language**,
+some **shipped**, and only some are still genuinely pending. Conflating the
+three is what let the design docs drift, so they are split here.
+
+**Removed — not coming back** (proposal 001):
+
+- `overlaps()` / `implies()` ambiguity detection, `AmbiguousClauseError` —
+  §2.1. Overlapping same-specificity clauses resolve by declaration order.
+- `Flat` / `Orderless` attributes and canonicalization — §2.3.
+- Comprehensive ambiguity test matrix — moot with the check gone.
+- The `Ok` half of `Ok`/`Err`, and with it `is_ok` / `map_ok` / `and_then`
+  — §2.5. Success is the value itself.
+
+**Shipped since:**
+
+- The `Err` result type and combinators (`catch`, `recover`, `finally`,
+  `unwrap`, `unwrap_err`, `is_err`) with pipe short-circuiting.
+- Self-hosting: the derived list layer *can* be written in Minimatic today
+  (`docs/capabilities-and-roadmap.md` §2.1), though recursion depth caps it
+  at a few hundred elements.
+
+**Still pending:**
+
+- `Hold` / `ReleaseHold` with lexical env-snapshot capture; `:>`
+  (`RuleDelayed`).
+- `Dict` and its derived operations.
+- The rest of the derived prelude (`sort_by`, `group_by`, the functional
+  combinators, the string layer).
+- Performance/benchmarking.
 
 These map directly onto the original full design's Phases 4–6 and 9–10 in
 the prior version of this document; nothing about the target architecture
