@@ -470,9 +470,12 @@ Note the pipe is what short-circuits, not the call: `f(Err(...))` invokes
 > dedicated `List` type was tried and dropped because it added a second
 > representation for one value and a conversion boundary of exactly the kind
 > §2.1 argues against (`IMPLEMENTATION_PLAN.md` records the reasoning).
-> `Dict` does not exist at all yet. The design below remains the intended
-> destination, and the argument for it still holds — it is the *when*, not
-> the *whether*, that is open.
+> `Dict` is the same story: an `Expression` headed by `Symbol("Dict")`
+> whose arguments are `Rule(k, v)` entries, canonicalised — deduplicated
+> and key-sorted — at construction, so a dict's structural identity and its
+> value agree (`minimatic/dict_ops.py`). Lookup is therefore a linear scan.
+> The design below remains the intended destination, and the argument for
+> it still holds — it is the *when*, not the *whether*, that is open.
 
 "Every update returns a new value" (§1) must not mean "every update is
 O(n)." Native Python `list`/`dict`, copied on every operation, would make

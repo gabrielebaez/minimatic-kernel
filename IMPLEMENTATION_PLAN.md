@@ -694,7 +694,6 @@ three is what let the design docs drift, so they are split here.
 
 **Still pending:**
 
-- `Dict` and its derived operations.
 - The rest of the derived prelude (`sort_by`, `group_by`, the functional
   combinators, the string layer).
 - Performance/benchmarking.

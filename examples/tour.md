@@ -315,9 +315,83 @@ ReleaseHold(Hold(not(not(not(True)))) //. not(not(a: _)) :> a)
 Rules that never settle are an error, not a hang: `//.` gives up once the
 passes or the expression size run past their limits.
 
+## Dicts
+
+`{ key -> value, ... }` is a dict. Entries are sorted by key when the dict
+is built, so two dicts written in different orders are the *same value* —
+which is what lets `==` and pattern matching agree about them without any
+dict-specific rules:
+
+```minimatic
+stock = { "Orange" -> 1, "Green" -> 2 }
+
+stock
+stock == { "Green" -> 2, "Orange" -> 1 }
+```
+
+Reading:
+
+```minimatic
+keys(stock)
+values(stock)
+length(stock)
+has_key(stock, "Green")
+key_get(stock, "Green")
+key_get(stock, "Purple")
+```
+
+A missing key is an ordinary `Err` value, not a raised error, so it flows
+through a pipeline like any other failure:
+
+```minimatic
+key_get(stock, "Purple") |> unwrap(0)
+```
+
+Every update returns a new dict; the original is untouched:
+
+```minimatic
+key_set(stock, "Blue", 10)
+key_drop(stock, "Orange")
+stock
+```
+
+`merge` is right-biased on conflicting keys, and `map_values` transforms
+values in place:
+
+```minimatic
+merge(stock, { "Green" -> 99, "Blue" -> 10 })
+stock |> map_values(n -> n * 100)
+```
+
+`to_pairs` and `from_pairs` bridge to the list layer, so list combinators
+work on a dict without dict-specific versions of each:
+
+```minimatic
+to_pairs(stock)
+to_pairs(stock) |> from_pairs
+```
+
+Because a dict is an ordinary expression, everything else already works on
+it — structure inspection, rewriting, and patterns:
+
+```minimatic
+Head(stock)
+{ "a" -> "N/A" } /. "N/A" -> 0
+
+price({ "item" -> n: _, "cost" -> c: _ }) := n
+price(d: _dict)                            := "no cost"
+
+price({ "cost" -> 5, "item" -> "pen" })
+price({ "item" -> "pen" })
+```
+
+A dict pattern matches *exactly* those entries — the second call falls
+through because the dict has no `"cost"`. Matching on a subset of keys is
+not built yet.
+
 ---
 
 This is all MVP-stage behavior — see `IMPLEMENTATION_PLAN.md` and the
 README's status table for what's deferred (ambiguity detection, `Flat`/
-`Orderless`, `Ok`, `Dict`, the string layer). Nothing above depends on any
-of that.
+`Orderless`, `Ok`, indexing, the string layer). Nothing above depends on
+any of that.

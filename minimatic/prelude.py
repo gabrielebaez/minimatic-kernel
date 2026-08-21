@@ -19,6 +19,14 @@ from .ast.atoms import is_integer
 from .ast.expression import Expression, head_of, tail_of
 from .ast.patterns import Condition
 from .ast.symbol import Symbol
+from .dict_ops import (
+    MISSING,
+    build_dict,
+    canonical_key,
+    check_dict,
+    dict_lookup,
+    dict_pairs,
+)
 from .attributes import HoldAll, HoldFirst, HoldRest, Listable, ResultAware
 from .errors import MinimaticSyntaxError, MinimaticTypeError
 from .extend import register_head
@@ -416,9 +424,17 @@ def _impl_list(*args):
     return Expression(Symbol("List"), *args)
 
 
-def _impl_length(list_expr):
-    _check_list(list_expr, "length")
-    return len(list_expr.tail)
+_CONTAINER_HEADS = (Symbol("List"), Symbol("Dict"))
+
+
+def _impl_length(value):
+    # List or Dict: both are expressions whose arguments *are* their
+    # elements, so "how many" is the same question for each. Strings are
+    # not here because there is no string layer yet (docs/the prelude.md
+    # §7); `EmptyQ` covers them because it needs no such layer.
+    if isinstance(value, Expression) and value.head in _CONTAINER_HEADS:
+        return len(value.tail)
+    raise MinimaticTypeError(f"length: expected a List or Dict, got {value!r}")
 
 
 def _impl_first(list_expr):
@@ -462,6 +478,147 @@ def _impl_fold(list_expr, fn_value, initial, ctx=None):
     for item in list_expr.tail:
         acc = ctx.apply(fn_value, [acc, item])
     return acc
+
+
+# ------------------------------------------------------------------ dict --
+#
+# A Dict is an ordinary Expression headed by `Dict` whose arguments are
+# `Rule(key, value)` expressions, canonicalised on the way in — see
+# minimatic/dict_ops.py for why sorting at construction is what keeps
+# `equal`, `/.` matching and `Args` agreeing about what a dict is.
+
+
+def _entry_pair(entry, who):
+    """Read a `key -> value` entry, rejecting anything else.
+
+    `{ "a" :> 1 }` parses -- parse_single_rule handles `:>` before it
+    expects an arrow -- but a dict entry is not a rewrite rule, so it is
+    refused rather than quietly treated as one."""
+    if (
+        isinstance(entry, Expression)
+        and entry.head == Symbol("Rule")
+        and len(entry.tail) == 2
+    ):
+        return entry.tail[0], entry.tail[1]
+    raise MinimaticTypeError(f"{who}: expected `key -> value` entries, got {entry!r}")
+
+
+def _impl_dict(*entries, ctx=None):
+    """`{ "a" -> 1, "b" -> 2 }`.
+
+    Evaluates its own keys and values, which no other data constructor has
+    to do. `Rule` is HoldAll -- so that a rewrite rule's pattern LHS
+    reaches the matcher unevaluated -- and a dict literal is parsed as
+    `Dict(Rule(k, v), ...)`, so the entries arrive here held. Without this,
+    `{ "a" -> 1 + 1 }` would store `plus(1, 1)`.
+    """
+    pairs = [_entry_pair(e, "Dict") for e in entries]
+    return build_dict([(ctx.eval(k), ctx.eval(v)) for k, v in pairs])
+
+
+def _impl_keys(dict_expr):
+    check_dict(dict_expr, "keys")
+    return Expression(Symbol("List"), *(k for k, _ in dict_pairs(dict_expr)))
+
+
+def _impl_values(dict_expr):
+    check_dict(dict_expr, "values")
+    return Expression(Symbol("List"), *(v for _, v in dict_pairs(dict_expr)))
+
+
+def _impl_key_get(dict_expr, key):
+    # A missing key is routine, not a programming error -- so a value, per
+    # minimatic/result.py. (docs/the prelude.md §6 contrasts this with a
+    # `d[k]` accessor that would raise; that syntax does not exist.)
+    check_dict(dict_expr, "key_get")
+    value = dict_lookup(dict_expr, key)
+    if value is MISSING:
+        return err("KeyNotFound", f"key_get: no entry for {key!r}")
+    return value
+
+
+def _impl_key_set(dict_expr, key, value):
+    # Replacement falls out of build_dict's last-wins rule; no separate
+    # "does it already exist" branch.
+    check_dict(dict_expr, "key_set")
+    return build_dict([*dict_pairs(dict_expr), (key, value)])
+
+
+def _impl_key_drop(dict_expr, key):
+    # Total, like `rest([])`: dropping a key that is not there returns the
+    # dict unchanged rather than failing.
+    check_dict(dict_expr, "key_drop")
+    target = canonical_key(key)
+    return build_dict(
+        [(k, v) for k, v in dict_pairs(dict_expr) if canonical_key(k) != target]
+    )
+
+
+def _impl_has_key(dict_expr, key):
+    check_dict(dict_expr, "has_key")
+    return dict_lookup(dict_expr, key) is not MISSING
+
+
+def _impl_merge(first, *rest):
+    # Right-biased on conflicting keys, which is build_dict's last-wins
+    # rule again rather than a second policy.
+    dicts = (first, *rest)
+    pairs = []
+    for d in dicts:
+        check_dict(d, "merge")
+        pairs.extend(dict_pairs(d))
+    return build_dict(pairs)
+
+
+def _impl_map_values(dict_expr, fn_value, ctx=None):
+    # dict-first, matching map/fold: `d |> map_values(f)` splices `d` into
+    # first position.
+    check_dict(dict_expr, "map_values")
+    return build_dict([(k, ctx.apply(fn_value, [v])) for k, v in dict_pairs(dict_expr)])
+
+
+def _impl_map_keys(dict_expr, fn_value, ctx=None):
+    # If `f` maps two distinct keys onto the same key, the later entry
+    # wins -- build_dict's rule, applied to a collision the caller created.
+    check_dict(dict_expr, "map_keys")
+    return build_dict([(ctx.apply(fn_value, [k]), v) for k, v in dict_pairs(dict_expr)])
+
+
+def _impl_to_pairs(dict_expr):
+    # The entries already *are* `Rule(k, v)` expressions; this only changes
+    # the head that holds them, which is what lets the list combinators be
+    # reused on a dict.
+    check_dict(dict_expr, "to_pairs")
+    return Expression(Symbol("List"), *dict_expr.tail)
+
+
+def _impl_from_pairs(list_expr):
+    """The inverse of `to_pairs`.
+
+    Unlike `Dict`, this does *not* evaluate keys and values: its argument
+    is an ordinary already-evaluated List, the same way `append`/`first`
+    treat theirs. That asymmetry is deliberate -- evaluating here would
+    break the round trip `to_pairs(d) |> from_pairs` for any dict holding a
+    closure, since a Closure is a value that cannot be evaluated again.
+
+    The visible consequence: `from_pairs(["a" -> 1 + 1])` stores `1 + 1`
+    unevaluated, because `Rule` is HoldAll and a written rule list already
+    holds its right-hand sides -- `["a" -> 1 + 1]` shows that on its own,
+    with no dict involved.
+    """
+    _check_list(list_expr, "from_pairs")
+    return build_dict([_entry_pair(e, "from_pairs") for e in list_expr.tail])
+
+
+def _impl_empty_q(value):
+    # Works over List, Dict and String uniformly (docs/the prelude.md §9).
+    # Strings are included where `length` excludes them: this needs no
+    # string layer, only Python's own emptiness.
+    if isinstance(value, str):
+        return len(value) == 0
+    if isinstance(value, Expression) and value.head in _CONTAINER_HEADS:
+        return len(value.tail) == 0
+    raise MinimaticTypeError(f"EmptyQ: expected a List, Dict or String, got {value!r}")
 
 
 # ------------------------------------------------------------ arithmetic --
@@ -616,6 +773,20 @@ def register_prelude(registry) -> None:
     register_head(registry, "append", _impl_append)
     register_head(registry, "map", _impl_map, pass_ctx=True)
     register_head(registry, "fold", _impl_fold, pass_ctx=True)
+
+    register_head(registry, "Dict", _impl_dict, pass_ctx=True)
+    register_head(registry, "keys", _impl_keys)
+    register_head(registry, "values", _impl_values)
+    register_head(registry, "key_get", _impl_key_get)
+    register_head(registry, "key_set", _impl_key_set)
+    register_head(registry, "key_drop", _impl_key_drop)
+    register_head(registry, "has_key", _impl_has_key)
+    register_head(registry, "merge", _impl_merge)
+    register_head(registry, "map_values", _impl_map_values, pass_ctx=True)
+    register_head(registry, "map_keys", _impl_map_keys, pass_ctx=True)
+    register_head(registry, "to_pairs", _impl_to_pairs)
+    register_head(registry, "from_pairs", _impl_from_pairs)
+    register_head(registry, "EmptyQ", _impl_empty_q)
 
     register_head(registry, "plus", _impl_plus, attributes=[Listable])
     register_head(registry, "minus", _impl_minus, attributes=[Listable])

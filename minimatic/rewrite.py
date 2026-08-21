@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from .ast.expression import Expression
 from .ast.symbol import Symbol
+from .dict_ops import canonicalize_dict_patterns
 from .errors import MinimaticTypeError, RewriteLimitError
 from .match import match
 
@@ -181,9 +182,12 @@ def extract_rules(rule_expr) -> list[RewriteRule]:
 
 
 def _as_rule(r) -> RewriteRule:
+    # The LHS goes through the same dict-pattern canonicalisation a clause
+    # pattern gets in dispatch.define -- these are the two routes a pattern
+    # takes to the matcher.
     if isinstance(r, Expression) and len(r.tail) == 2:
         if r.head == _RULE:
-            return RewriteRule(r.tail[0], r.tail[1], delayed=False)
+            return RewriteRule(canonicalize_dict_patterns(r.tail[0]), r.tail[1], False)
         if r.head == _RULE_DELAYED:
-            return RewriteRule(r.tail[0], r.tail[1], delayed=True)
+            return RewriteRule(canonicalize_dict_patterns(r.tail[0]), r.tail[1], True)
     raise MinimaticTypeError(f"expected a Rule, got {r!r}")

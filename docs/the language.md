@@ -107,13 +107,14 @@ be written into.
 
 ```
 myList = [1, 2, 3, 4]
-myList[0]                     (* 1 *)
-myList[1] <- 5                 (* [1, 5, 3, 4] -- a new list *)
+myList[0]                     (* 1 -- indexing NOT YET IMPLEMENTED *)
+myList[1] <- 5                 (* [1, 5, 3, 4] -- a new list; NOT YET IMPLEMENTED *)
 myList                         (* [1, 2, 3, 4] -- original untouched *)
 
 myHash = { "Green" -> 2, "Orange" -> 1 }
-myHash["Green"]
-myHash |> key_drop("Green") |> set("Blue", 10)
+key_get(myHash, "Green")       (* `myHash["Green"]` is the intended sugar,
+                                  also NOT YET IMPLEMENTED *)
+myHash |> key_drop("Green") |> key_set("Blue", 10)
 ```
 
 Every operation that looks like an update — index assignment, `append`,
@@ -122,6 +123,13 @@ guarantee, not an implementation detail: code can rely on the fact that
 holding a reference to `myList` means holding a reference to *that*
 list, permanently, regardless of what else happens to variables that
 were once bound to it.
+
+**Dict entries are canonically ordered.** A dict is deduplicated and
+sorted by key when it is built, so `{"a" -> 1, "b" -> 2}` and
+`{"b" -> 2, "a" -> 1}` are the same value — they compare equal, and a
+pattern written either way matches either one. The order itself is
+deliberately unspecified beyond being stable and total across mixed key
+types; `keys(d)` is in that order, not the order you wrote.
 
 ### 6.2 Ranges
 
