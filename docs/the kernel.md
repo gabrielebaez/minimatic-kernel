@@ -208,7 +208,7 @@ macro-like head.
 ## 5. Pattern matcher
 
 ```python
-def match(pattern: Node, value: Node, bindings: dict) -> dict | None:
+def match(pattern: Node, value: Node, bindings: dict, ctx=None) -> dict | None:
     ...
 ```
 
@@ -224,6 +224,24 @@ reuse: it guarantees that a pattern means the same thing whether it
 appears as a function parameter (`f(x: _int) := ...`) or as a rewrite-rule
 LHS (`expr /. x: _int -> ...`), which the surface syntax already implies by
 using identical pattern grammar in both positions.
+
+### 5.1 The one thing that is not pure structural recursion
+
+`Condition` (`pattern /; guard`, language doc §9.2) has to **evaluate** its
+guard, which is why `match` carries an optional `ctx`. Both callers already
+have one — `dispatch.py` builds it per call, `rewrite.py` already threaded
+it for `ReplaceAll` — so nothing new is plumbed; the guard simply evaluates
+in `ctx.env` extended with the bindings the pattern just produced.
+
+Keeping guards *inside* `match` rather than lifting them into
+`dispatch.py`/`rewrite.py` is deliberate. A guard can sit anywhere a
+pattern can, including nested inside a compound pattern
+(`f(List(x: _int /; x > 0), y: _)`), and a caller one layer up cannot see
+those. The cost is that `match` is no longer evaluation-free; the payoff is
+that it stays the *single* matcher §5 exists to guarantee.
+
+`Alternatives` (`p1 | p2`) needs no such escape — it is ordinary
+recursion, trying each branch and returning the first success.
 
 ---
 
@@ -257,6 +275,12 @@ lexicographically across a clause's full parameter list:
 | Typed blank (`_int`) | middle |
 | Bare blank (`_`), bare binding symbol | low |
 | Sequence blank (`__`, `___`) | lowest, and affects arity comparison |
+| Alternatives (`p1 \| p2`) | its **weakest** branch's score |
+| Condition (`p /; g`) | exactly its inner pattern's score |
+
+A guard scores as its unguarded shape because a guard narrows at run time
+and specificity is static — see language doc §9.2 for the ordering
+consequence (guarded clauses must be declared first).
 
 Scoring **recurses into compound patterns**, comparing their arguments
 structurally, so `Err("IOError", d: _)` strictly outranks
@@ -320,15 +344,39 @@ makes "rewriting is explicit, not ambient" a structural property of the
 codebase, not just a rule contributors are expected to remember.
 
 ```python
-def replace_all(node: Node, rules: list[Rule]) -> Node:
+def replace_all(node: Node, rules: list[RewriteRule], ctx) -> Node:
     for rule in rules:
-        if (b := match(rule.lhs, node, {})) is not None:
+        if (b := match(rule.lhs, node, {}, ctx)) is not None:
             rhs = substitute(rule.rhs, b)
-            return rhs if rule.delayed else eval(rhs, global_env)
+            return rhs if rule.delayed else ctx.eval(rhs)
     if isinstance(node, Expr):
-        return Expr(node.head, tuple(replace_all(a, rules) for a in node.args))
+        return node.map_args(lambda a: replace_all(a, rules, ctx))
     return node
+
+
+def replace_repeated(node, rules, ctx, limit, node_limit) -> Node:
+    """`//.` — replace_all until nothing changes, or give up."""
+    current = node
+    for _ in range(limit):
+        nxt = replace_all(current, rules, ctx)
+        if exceeds_size(nxt, node_limit):
+            raise RewriteLimitError(node_limit, "nodes")
+        if structurally_equal(nxt, current):
+            return current
+        current = nxt
+    raise RewriteLimitError(limit)
 ```
+
+`replace_repeated` needs **two** limits, because divergence takes two
+shapes. A rule that cycles or crawls (`[1,2,3] //. x: _int -> x + 1`) is
+caught by the pass count. A rule that *multiplies* — one that rewrites the
+leaves it just produced, as `1 //. x: _int :> x + 1` does — doubles the
+tree every pass, so 256 passes is 2^256 nodes and the pass count never gets
+to fire; only measuring the result catches that one.
+
+The fixpoint test is structural, not `==`: `Expr.__eq__` compares tails
+with Python `==`, under which `List(1) == List(True)`, so a rewrite between
+those two would read as a fixpoint.
 
 - **`Hold(expr)`** — a builtin head with the `HoldAll` attribute (§4.2).
   Its argument is never passed through `eval`; it is stored as-is.
@@ -338,8 +386,13 @@ def replace_all(node: Node, rules: list[Rule]) -> Node:
   and left for later evaluation; relevant when the RHS has side effects or
   non-deterministic heads (e.g. `random()`) that should re-fire per match
   rather than being computed once and reused.
+- **`//.` (ReplaceRepeated)** — `replace_all` to a fixpoint, above.
 - **`ReleaseHold(expr)`** — the single point where a previously-held tree
-  re-enters ordinary `eval`.
+  re-enters ordinary `eval`. It strips one `Hold` and evaluates what was
+  inside **in the environment it is released in**: `Hold` captures no
+  environment, which is what keeps a held node structurally identical to
+  ordinary data (§2.3) and therefore matchable by ordinary patterns. See
+  language doc §16.4, now closed.
 
 Because rewriting operates on the same `Node` type as everything else
 (§2.3), `/.` applied to an already-evaluated plain list works with the
@@ -484,7 +537,7 @@ minimatic/
   eval.py         # core loop (§4)
   dispatch.py     # ClauseSet, score(), Clause (§6)
   match.py        # match() — shared by dispatch.py and rewrite.py (§5)
-  rewrite.py      # replace_all / Rule (§7); Hold/ReleaseHold not yet built
+  rewrite.py      # replace_all / replace_repeated / RewriteRule (§7)
   attributes.py   # attribute table (§8)
   result.py       # Err and the value/exception boundary (§9)
   registry.py     # head name -> ClauseSet + attributes
@@ -542,12 +595,18 @@ questions are struck rather than removed.
    this is now the *only* structural guard against surprise redefinition,
    since (1) is gone — it carries weight it was not originally carrying
    alone.
-4. **Error identity through `Hold`.** If evaluation inside a delayed rule
-   RHS (`:>`) raises rather than returning `Err`, does that propagate as a
-   kernel exception or get coerced to `Err`? Still open, and deferred along
-   with `Hold` itself. `minimatic/result.py` now draws the general line —
-   routine failure is a value, programming errors stay exceptions — which
-   is the frame this question should be answered in.
+4. ~~**Error identity through `Hold`.**~~ **Closed**, in
+   `minimatic/result.py`'s frame. A delayed rule's RHS is not evaluated by
+   the rewriter at all — that is what `:>` means — so nothing raises
+   *during* rewriting. When the result is later released, it evaluates
+   like any other expression: a routine failure comes back as an `Err`
+   value, a programming error stays a kernel exception. `Hold` introduces
+   no third category, precisely because it introduces no separate
+   representation to lose identity across.
+
+   The one addition rewriting does make is `RewriteLimitError`: a `//.`
+   rule set with no normal form is a mistake in the rules, so it raises
+   rather than yielding a value.
 5. **Recursion depth.** There is no tail-call elimination, so
    Minimatic-level recursion inherits Python's stack limit and
    `RecursionError` escapes `MinimaticError` entirely. Self-hosted list

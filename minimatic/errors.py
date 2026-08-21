@@ -78,11 +78,30 @@ class MinimaticTypeError(MinimaticError):
     """Raised on a runtime type mismatch (e.g. a typed blank / builtin arg check)."""
 
 
+class RewriteLimitError(MinimaticError):
+    """Raised when `//.` (ReplaceRepeated) never reaches a normal form.
+
+    A rule set that keeps producing new output has no fixpoint to find, so
+    this is a programming error in the rules, not a routine failure to
+    hand back as a value. See minimatic/rewrite.py's MAX_REWRITE_PASSES.
+    """
+
+    def __init__(self, limit: int, what: str = "passes"):
+        self.limit = limit
+        self.what = what
+        super().__init__(
+            f"'//.' gave up after {limit} {what}: these rules have no normal "
+            "form for this expression — every pass keeps producing something new"
+        )
+
+
 class NotImplementedInMVPError(MinimaticError):
     """
-    Raised by parsed-but-unimplemented constructs (e.g. `:>` RuleDelayed,
-    `Hold`/`ReleaseHold`) so users get a clear signal instead of silently
-    wrong behavior. See IMPLEMENTATION_PLAN.md for what's deferred and why.
+    Raised by parsed-but-unimplemented constructs so users get a clear
+    signal instead of silently wrong behavior. Currently unused — `:>` and
+    `Hold`/`ReleaseHold`, its original two occupants, both ship now — but
+    kept as the established shape for the next deferral. See
+    IMPLEMENTATION_PLAN.md for what remains out of scope.
     """
 
     def __init__(self, feature: str):

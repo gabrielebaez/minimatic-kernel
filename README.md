@@ -7,9 +7,10 @@
 `minimatic-kernel` is the interpreter for **Minimatic**, a small, embeddable
 expression language for Python applications. This repository contains the
 core language implementation: the parser, evaluator, pattern-matching and
-clause-dispatch engine, `/.` rewriting over data, and the Python extension
-API (`register_head`). Held *code* — `Hold`/`ReleaseHold` and delayed rules
-— is designed but deferred; see [Status](#status).
+clause-dispatch engine, the `Hold` / `/.` / `ReleaseHold` rewriting layer,
+and the Python extension API (`register_head`). What a Minimatic-level user
+still cannot do is declare a head of their own that holds its arguments;
+see [Status](#status).
 
 ## What is Minimatic
 
@@ -103,15 +104,17 @@ Statuses below mean exactly one of four things:
 | Parser / core `head(args)` evaluation | working |
 | Specificity-scored clause dispatch (`score()`, most-specific-first) | working — see dispatch note below |
 | Blank / typed pattern matching (`_`, `_int`, `__`, `___`) | working |
+| Alternatives (`_int \| _string`) and guards (`/;`) | working |
 | Pipe `\|>` / `//`, including `$` placeholders | working |
-| `/.` rewriting over evaluated data | working |
+| `/.` and `//.` rewriting, over data and over held code | working |
 | Hold attributes (`HoldAll`/`HoldFirst`/`HoldRest`) and `Listable` | working |
 | Control flow (`if`, `switch`, `which`, `for`, `each`, `;`) | working — ordinary heads, no special-form syntax |
 | Python extension API (`register_head`) | working, signature simplified — see below |
 | Value-or-`Err` results (`catch`, `recover`, `finally`) | working — no `Ok` wrapper ([§2.5](docs/proposal-001-dispatch-results-and-pipes.md)) |
 | Structure inspection (`Head`, `Args`) | working |
-| `not` / `!` | working; `and`/`or` not yet |
-| `Hold` / `ReleaseHold` / delayed rules (`:>`) | deferred |
+| `not` / `!`, `and`, `or` | working |
+| `Hold` / `ReleaseHold` / delayed rules (`:>`) | working |
+| `Attributes(f) := HoldAll` (user-declared hold heads) | deferred |
 | Ambiguity detection at definition time (`overlaps`/`implies`) | **removed** ([§2.1](docs/proposal-001-dispatch-results-and-pipes.md)) |
 | `Flat` / `Orderless` attributes | **removed** ([§2.3](docs/proposal-001-dispatch-results-and-pipes.md)) |
 | Performance / benchmarking | not started |
@@ -161,17 +164,17 @@ prioritize.
   in an untagged fence, so unlike [`examples/tour.md`](examples/tour.md) it
   is never executed and never tested
 
-The three design docs have been reconciled with proposal 001 and describe
-the language as it now stands. They remain *design* documents: where they
-specify something not yet built — indexing, `Attributes(f) := …`,
-`Hold`/`ReleaseHold`, `Dict`, the string layer — they describe the
-intended language, and `docs/capabilities-and-roadmap.md` is the record of
-which parts exist today.
+The three design docs have been reconciled with proposal 001 and with the
+pattern-language work, and describe the language as it now stands. They
+remain *design* documents: where they specify something not yet built —
+indexing, `Attributes(f) := …`, `Dict`, the string layer — they describe
+the intended language, and `docs/capabilities-and-roadmap.md` is the
+record of which parts exist today.
 
 > **Except the 15-minute walkthrough**, which still predates proposal 001:
-> it teaches `Flat`/`Orderless` (removed), `Hold` (deferred), and `Ok`
-> (replaced by value-or-`Err`). Nothing executes it, so nothing catches the
-> drift — read it for shape, not for detail.
+> it teaches `Flat`/`Orderless` (removed) and `Ok` (replaced by
+> value-or-`Err`). Nothing executes it, so nothing catches the drift —
+> read it for shape, not for detail.
 
 ## Repository scope
 

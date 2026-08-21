@@ -39,11 +39,14 @@ class TokenKind(Enum):
     ARROW = auto()  # ->
     DELAYED_ARROW = auto()  # :>
     REPLACE = auto()  # /.
+    REPLACE_REPEATED = auto()  # //. -- rewrite to a fixpoint
+    CONDITION = auto()  # /; -- pattern guard
     PIPE = auto()  # |>
     POSTFIX = auto()  # //
     MAP = auto()  # /@
     RANGE = auto()  # ..
     AMP = auto()  # &
+    BAR = auto()  # | -- Alternatives in pattern position
     DOLLAR = auto()  # $ — the pipe's placeholder (a |> f($, b))
     BANG = auto()  # ! — unary `not` sugar
 
@@ -81,11 +84,18 @@ _KEYWORDS = {
 }
 
 # Multi-character operators, longest first so maximal munch is a linear scan.
+#
+# The order is load-bearing, not cosmetic: `_next_token` takes the *first*
+# entry that matches, so a longer operator sharing a prefix with a shorter
+# one must come first. `//.` before `//` is the live case — otherwise `//.`
+# lexes as POSTFIX followed by a stray `.`, which is not a token at all.
 _MULTI_CHAR_OPS: list[tuple[str, TokenKind]] = [
+    ("//.", TokenKind.REPLACE_REPEATED),
     (":=", TokenKind.DEFINE),
     ("->", TokenKind.ARROW),
     (":>", TokenKind.DELAYED_ARROW),
     ("/.", TokenKind.REPLACE),
+    ("/;", TokenKind.CONDITION),
     ("//", TokenKind.POSTFIX),
     ("/@", TokenKind.MAP),
     ("|>", TokenKind.PIPE),
@@ -109,6 +119,9 @@ _SINGLE_CHAR_OPS: dict[str, TokenKind] = {
     "%": TokenKind.PERCENT,
     "&": TokenKind.AMP,
     "$": TokenKind.DOLLAR,
+    # `|>` is in _MULTI_CHAR_OPS and matched first, so a bare `|` here is
+    # unambiguous -- same arrangement as `!=` versus `!`.
+    "|": TokenKind.BAR,
     # `!=` is in _MULTI_CHAR_OPS and matched first, so a bare `!` here is
     # unambiguous.
     "!": TokenKind.BANG,

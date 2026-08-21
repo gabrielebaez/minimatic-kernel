@@ -17,12 +17,13 @@ from __future__ import annotations
 
 from .ast.atoms import is_integer
 from .ast.expression import Expression, head_of, tail_of
+from .ast.patterns import Condition
 from .ast.symbol import Symbol
 from .attributes import HoldAll, HoldFirst, HoldRest, Listable, ResultAware
 from .errors import MinimaticSyntaxError, MinimaticTypeError
 from .extend import register_head
 from .result import err, is_err_value
-from .rewrite import extract_rules, replace_all
+from .rewrite import extract_rules, looks_like_rules, replace_all, replace_repeated
 
 
 # ---------------------------------------------------------------- forms --
@@ -36,13 +37,21 @@ def _impl_set(name_sym, value, ctx=None):
 
 
 def _impl_set_delayed(lhs_call, body, ctx=None):
+    # `f(x: _) /; x > 0 := body` — a clause-level guard. SetDelayed is
+    # HoldAll, so the Condition node arrives intact; unwrap it here so the
+    # arity/shape check below still sees the plain call pattern, and the
+    # guard travels to the Clause rather than into the argument patterns.
+    guard = None
+    if isinstance(lhs_call, Condition):
+        lhs_call, guard = lhs_call.pattern, lhs_call.guard
+
     if not (isinstance(lhs_call, Expression) and isinstance(lhs_call.head, Symbol)):
         raise MinimaticSyntaxError(
             "left-hand side of ':=' must be a function pattern like f(x: _int)"
         )
     head_name = lhs_call.head.name
     clause_set = ctx.registry.get_or_create(head_name)
-    clause_set.define(lhs_call.tail, body=body)
+    clause_set.define(lhs_call.tail, body=body, guard=guard)
     return lhs_call.head
 
 
@@ -56,9 +65,64 @@ def _impl_rule(lhs, rhs, ctx=None):
     return Expression(Symbol("Rule"), lhs, rhs)
 
 
+def _impl_rule_delayed(lhs, rhs, ctx=None):
+    # HoldAll like `Rule`, and for a sharper reason: a delayed rule's whole
+    # purpose is that its RHS has not been evaluated.
+    return Expression(Symbol("RuleDelayed"), lhs, rhs)
+
+
+def _resolve_rules(rule_expr, ctx):
+    """`ReplaceAll`/`ReplaceRepeated` are HoldRest, so the rule argument
+    arrives unevaluated — necessary, or a pattern LHS would evaluate before
+    it could match. A rule that was *computed* rather than written out
+    (`expr /. rule`, `expr /. rules_for(x)`) therefore arrives as an
+    unevaluated symbol or call, and has to be evaluated here."""
+    return extract_rules(rule_expr if looks_like_rules(rule_expr) else ctx.eval(rule_expr))
+
+
 def _impl_replace_all(value, rule_expr, ctx=None):
-    rules = extract_rules(rule_expr)
-    return replace_all(value, rules, ctx)
+    return replace_all(value, _resolve_rules(rule_expr, ctx), ctx)
+
+
+def _impl_replace_repeated(value, rule_expr, ctx=None):
+    return replace_repeated(value, _resolve_rules(rule_expr, ctx), ctx)
+
+
+# ----------------------------------------------------------- held code --
+#
+# The three-step cycle docs/the language.md §11 is built on: `Hold`
+# captures, `/.` (or `//.`) rewrites, `ReleaseHold` re-enters evaluation.
+# Rewriting is scoped to exactly these names — if none of them appears in a
+# piece of code, that code's evaluation involves no rewriting at all.
+
+
+def _impl_hold(expr, ctx=None):
+    # `Hold` names both a head (here) and an evaluation attribute
+    # (minimatic/attributes.py). The collision is nominal: attributes are
+    # keyed by head name in the registry, and this head's own attribute set
+    # is `{HoldAll}`. Not a clash to "fix".
+    #
+    # Deliberately two elements, with no captured environment: a held
+    # expression stays structurally identical to ordinary data, so
+    # `x /. Hold(e: _) -> ...` matches it like anything else, and `Hold`
+    # stays the zero-cost operation docs/the kernel.md §2.3 promises.
+    return Expression(Symbol("Hold"), expr)
+
+
+def _impl_release_hold(value, ctx=None):
+    """Strip one `Hold` and evaluate what was inside it.
+
+    Evaluated **in the environment it is released in**, not one captured at
+    `Hold` time (docs/the language.md §16.4). One layer per release, so
+    `ReleaseHold(Hold(Hold(e)))` is `Hold(e)`; anything that is not a
+    `Hold` comes back unchanged, which keeps this total.
+
+    Not held itself: its argument evaluates normally, which is what lets
+    `ReleaseHold(rewritten)` work on a name bound to a held expression.
+    """
+    if isinstance(value, Expression) and value.head == Symbol("Hold") and len(value.tail) == 1:
+        return ctx.eval(value.tail[0])
+    return value
 
 
 _DOLLAR = Symbol("$")
@@ -439,6 +503,38 @@ def _impl_negate(a):
     return -a
 
 
+def _impl_and(first, *rest_raw, ctx=None):
+    """`and(a, b, ...)` — HoldRest, so later arguments are never evaluated
+    once the answer is settled. Bool-strict like `not`: there is no
+    truthiness in Minimatic."""
+    _check_bool(first, "and")
+    if not first:
+        return False
+    for raw in rest_raw:
+        value = ctx.eval(raw)
+        _check_bool(value, "and")
+        if not value:
+            return False
+    return True
+
+
+def _impl_or(first, *rest_raw, ctx=None):
+    _check_bool(first, "or")
+    if first:
+        return True
+    for raw in rest_raw:
+        value = ctx.eval(raw)
+        _check_bool(value, "or")
+        if value:
+            return True
+    return False
+
+
+def _check_bool(value, who):
+    if not isinstance(value, bool):
+        raise MinimaticTypeError(f"{who}: expected a bool, got {value!r}")
+
+
 def _impl_not(a):
     # Bool-only, matching `if`'s strictness: there is no truthiness in
     # Minimatic, so `!5` is a mistake rather than `false`.
@@ -476,7 +572,19 @@ def register_prelude(registry) -> None:
     register_head(registry, "SetDelayed", _impl_set_delayed, attributes=[HoldAll], pass_ctx=True)
     register_head(registry, "Lambda", _impl_lambda, attributes=[HoldAll], pass_ctx=True)
     register_head(registry, "Rule", _impl_rule, attributes=[HoldAll], pass_ctx=True)
+    register_head(
+        registry, "RuleDelayed", _impl_rule_delayed, attributes=[HoldAll], pass_ctx=True
+    )
     register_head(registry, "ReplaceAll", _impl_replace_all, attributes=[HoldRest], pass_ctx=True)
+    register_head(
+        registry,
+        "ReplaceRepeated",
+        _impl_replace_repeated,
+        attributes=[HoldRest],
+        pass_ctx=True,
+    )
+    register_head(registry, "Hold", _impl_hold, attributes=[HoldAll], pass_ctx=True)
+    register_head(registry, "ReleaseHold", _impl_release_hold, pass_ctx=True)
     register_head(registry, "__pipe__", _impl_pipe, attributes=[HoldRest], pass_ctx=True)
 
     register_head(registry, "if", _impl_if, attributes=[HoldRest], pass_ctx=True)
@@ -517,6 +625,8 @@ def register_prelude(registry) -> None:
     register_head(registry, "mod", _impl_mod, attributes=[Listable])
     register_head(registry, "negate", _impl_negate, attributes=[Listable])
     register_head(registry, "not", _impl_not)
+    register_head(registry, "and", _impl_and, attributes=[HoldRest], pass_ctx=True)
+    register_head(registry, "or", _impl_or, attributes=[HoldRest], pass_ctx=True)
 
     register_head(registry, "equal", _impl_equal)
     register_head(registry, "not_equal", _impl_not_equal)

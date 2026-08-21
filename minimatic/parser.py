@@ -7,9 +7,10 @@ of Symbol / atom / Expression / pattern nodes with all surface sugar
 desugared, per the tables in IMPLEMENTATION_PLAN.md.
 
 Precedence, low to high:
-    pipe (|>, //)  >  arrow (->, :>)  >  replace (/.)  >  comparison
-    >  additive  >  multiplicative  >  map (/@, right-assoc)
-    >  power (^, right-assoc)  >  unary (-)  >  call  >  primary
+    pipe (|>, //)  >  arrow (->, :>)  >  condition (/;)
+    >  replace (/., //.)  >  comparison  >  range (..)  >  additive
+    >  multiplicative  >  map (/@, right-assoc)  >  power (^, right-assoc)
+    >  alternatives (|)  >  unary (-, !)  >  call  >  primary
 
 The two Wolfram-inherited operators sit at the levels their Wolfram
 counterparts do relative to the rest of the grammar: `//` (postfix
@@ -18,6 +19,14 @@ down to the same `__pipe__` desugaring, so `a // f(b)` splices `a` into
 first position exactly like `a |> f(b)`. `/@` (map) binds tighter than
 arithmetic and looser than `^`, so `f /@ xs * 2` is `(f /@ xs) * 2` and
 `f /@ g /@ xs` is `f /@ (g /@ xs)`.
+
+The two pattern-language operators sit where their meaning requires.
+`/;` (guard) is looser than comparison, so the whole of `x > 0` is one
+guard, and tighter than `->` and `:=`, so a single rule covers both the
+argument-level `f(x: _ /; x > 0)` and the clause-level
+`f(x: _) /; x > 0 := ...`. `|` (Alternatives) binds tighter than the `:` of
+a pattern bind — `x: _int | _string` is a bind of an alternation, not an
+alternation of a bind, which is the reading every use of it wants.
 
 `/.` gets its own dedicated rule sub-grammar (parse_single_rule /
 parse_rule_rhs) rather than reusing the general arrow parser, because a
@@ -30,9 +39,16 @@ not `Lambda(x, ReplaceAll(x, "N/A")) -> 0`.
 from __future__ import annotations
 
 from .ast.expression import Expression
-from .ast.patterns import Blank, BlankNullSeq, BlankSeq, PatternBind
+from .ast.patterns import (
+    Alternatives,
+    Blank,
+    BlankNullSeq,
+    BlankSeq,
+    Condition,
+    PatternBind,
+)
 from .ast.symbol import Symbol, symbol
-from .errors import MinimaticSyntaxError, NotImplementedInMVPError
+from .errors import MinimaticSyntaxError
 from .lexer import Token, TokenKind, tokenize
 
 _COMPARISON_OPS = {
@@ -143,51 +159,88 @@ class Parser:
     # -- level 2: arrow (right-assoc; Lambda if LHS is a bare Symbol, else Rule) --
 
     def parse_arrow(self):
-        left = self.parse_replace()
+        left = self.parse_condition()
         if self._at(TokenKind.ARROW) or self._at(TokenKind.DELAYED_ARROW):
             delayed = self._at(TokenKind.DELAYED_ARROW)
             self._advance()
             right = self.parse_arrow()
             if delayed:
-                raise NotImplementedInMVPError("RuleDelayed (:>)")
+                # Always a RuleDelayed, never a Lambda: a lambda whose body
+                # is deliberately left unevaluated is not a thing anyone
+                # writes, and reading `x :> body` as one would silently
+                # shadow the only spelling of a delayed rule.
+                return Expression(symbol("RuleDelayed"), left, right)
             if isinstance(left, Symbol):
                 return Expression(symbol("Lambda"), left, right)
             return Expression(symbol("Rule"), left, right)
         return left
 
-    # -- level 3: /. ReplaceAll --------------------------------------------
+    # -- level 2.5: /; Condition (pattern guard) ---------------------------
+
+    def parse_condition(self):
+        """`pattern /; guard`.
+
+        Looser than comparison so the guard swallows the whole of `x > 0`,
+        and tighter than `->` / `:=` so the guard attaches to the pattern
+        rather than to the rule or definition around it. A guard therefore
+        always sits on a rule's *left*-hand side: `lhs /; g -> rhs` guards
+        the match, while `lhs -> rhs /; g` parses as `Rule(lhs,
+        Condition(rhs, g))`, which is a mistake rather than a second
+        spelling of the same thing."""
+        left = self.parse_replace()
+        while self._at(TokenKind.CONDITION):
+            self._advance()
+            left = Condition(left, self.parse_replace())
+        return left
+
+    # -- level 3: /. ReplaceAll, //. ReplaceRepeated -----------------------
 
     def parse_replace(self):
         left = self.parse_comparison()
-        while self._at(TokenKind.REPLACE):
+        while self._at(TokenKind.REPLACE) or self._at(TokenKind.REPLACE_REPEATED):
+            repeated = self._at(TokenKind.REPLACE_REPEATED)
             self._advance()
             rules = self.parse_rule_rhs()
-            left = Expression(symbol("ReplaceAll"), left, rules)
+            head = "ReplaceRepeated" if repeated else "ReplaceAll"
+            left = Expression(symbol(head), left, rules)
         return left
 
     def parse_rule_rhs(self):
-        """The right side of `/.`: either `[rule, rule, ...]` or a single rule."""
+        """The right side of `/.` / `//.`: `[rule, rule, ...]` or a single rule."""
         if self._at(TokenKind.LBRACKET):
             self._advance()
             rules = []
             if not self._at(TokenKind.RBRACKET):
-                rules.append(self.parse_single_rule())
+                rules.append(self.parse_single_rule(bare_ok=True))
                 while self._at(TokenKind.COMMA):
                     self._advance()
                     if self._at(TokenKind.RBRACKET):
                         break
-                    rules.append(self.parse_single_rule())
+                    rules.append(self.parse_single_rule(bare_ok=True))
             self._expect(TokenKind.RBRACKET)
             return Expression(symbol("List"), *rules)
-        return self.parse_single_rule()
+        return self.parse_single_rule(bare_ok=True)
 
-    def parse_single_rule(self):
-        """`pattern -> expr` or `pattern :> expr` — always a Rule, never a Lambda.
-        Used by `/.` and by dict-literal entries."""
+    def parse_single_rule(self, *, bare_ok: bool = False):
+        """`pattern -> expr` or `pattern :> expr` — always a Rule/RuleDelayed,
+        never a Lambda. Used by `/.` / `//.` and by dict-literal entries.
+
+        `bare_ok` accepts an expression with no arrow at all, for the
+        rewrite positions where the rule is *computed* rather than written
+        out: `expr /. rule`, `expr /. [r1, r2]`, `expr /. rules_for(x)`.
+        Such a node is resolved to an actual rule at evaluation time
+        (prelude.py's `_impl_replace_all`), so a non-rule there is a runtime
+        error rather than a syntax error. Dict entries keep `bare_ok=False`
+        — `{k -> v}` has no computed form to allow."""
         lhs = self.parse_comparison()
+        if self._at(TokenKind.CONDITION):
+            self._advance()
+            lhs = Condition(lhs, self.parse_comparison())
         if self._at(TokenKind.DELAYED_ARROW):
             self._advance()
-            raise NotImplementedInMVPError("RuleDelayed (:>)")
+            return Expression(symbol("RuleDelayed"), lhs, self.parse_replace())
+        if bare_ok and not self._at(TokenKind.ARROW):
+            return lhs
         self._expect(TokenKind.ARROW)
         rhs = self.parse_replace()
         return Expression(symbol("Rule"), lhs, rhs)
@@ -251,12 +304,31 @@ class Parser:
     # -- level 7: power (right-assoc) ------------------------------------------
 
     def parse_power(self):
-        left = self.parse_unary()
+        left = self.parse_alternatives()
         if self._at(TokenKind.CARET):
             self._advance()
             right = self.parse_power()
             return Expression(symbol("power"), left, right)
         return left
+
+    # -- level 7.5: alternatives (|) -------------------------------------------
+
+    def parse_alternatives(self):
+        """`p1 | p2 | p3` -> a single `Alternatives` node.
+
+        Its operands are unary-level on purpose. `|` is a pattern
+        construct, and a pattern branch is a shape (`_int`, `"N/A"`,
+        `Err(k: _, d: _)`), never an arithmetic expression — so binding
+        loosely enough to swallow `+` would buy nothing and would cost the
+        tight binding that `x: _int | _string` depends on."""
+        left = self.parse_unary()
+        if not self._at(TokenKind.BAR):
+            return left
+        branches = [left]
+        while self._at(TokenKind.BAR):
+            self._advance()
+            branches.append(self.parse_unary())
+        return Alternatives(tuple(branches))
 
     # -- level 8: unary minus --------------------------------------------------
 
@@ -367,7 +439,10 @@ class Parser:
 
         if self._at(TokenKind.COLON):
             self._advance()
-            inner = self.parse_unary()
+            # parse_alternatives, not parse_unary: `x: _int | _string` must
+            # bind the whole alternation to `x`, not alternate `x: _int`
+            # with a bare `_string`.
+            inner = self.parse_alternatives()
             return PatternBind(name, inner)
 
         return symbol(name)

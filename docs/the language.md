@@ -269,6 +269,53 @@ The same pattern grammar — bare blanks (`_`), typed blanks (`_int`,
 This uniformity is deliberate: learning what a pattern means once is
 sufficient to read it in any of these three positions.
 
+### 9.1 Alternatives: `p1 | p2`
+
+`|` matches whichever of its branches matches first:
+
+```
+tag(v: _int | _string) := "scalar"
+tag(v: _)              := "something else"
+```
+
+`|` binds tighter than a named binding's `:`, so `x: _int | _string` binds
+`x` to whatever the alternation matched — a bind of an alternation, not an
+alternation of a bind. Only one branch ever matches, so the names a
+successful match binds are always the names that branch declares; a name
+that appears only in a losing branch is simply unbound.
+
+An alternation's specificity is that of its **weakest** branch: `_int | _`
+accepts everything `_` accepts, so it cannot outrank `_` in dispatch.
+
+### 9.2 Guards: `pattern /; condition`
+
+`/;` narrows a pattern by an ordinary boolean expression, evaluated
+against the names the pattern just bound plus the enclosing scope. It
+attaches either to a single argument or, more usually, to a whole clause
+head:
+
+```
+polarity(n: _int) /; n < 0  := "negative"
+polarity(n: _int) /; n == 0 := "zero"
+polarity(n: _int)           := "positive"
+
+first_positive(x: _int /; x > 0, rest: ___) := x
+```
+
+A guard that evaluates to `False` makes the clause not match, and dispatch
+moves on to the next one — it is an ordinary dispatch outcome, not an
+error. A guard must produce a `bool`; there is no truthiness in Minimatic
+— the same strictness `if` and `not` apply — so a guard yielding a number
+or an `Err` is a mistake to report, not a `False` to act on.
+
+**Guards do not affect specificity.** A guard narrows at run time, and
+specificity is a static property of shape, so a guarded clause and its
+unguarded twin tie and resolve by declaration order (§7.2) — **guarded
+clauses must be written first**, as above. This is the one place where the
+"specificity, not declaration order" rule of §7.1 genuinely needs the
+programmer's cooperation, and it is inherent: there is nowhere in a shape
+comparison to record "and also this predicate holds".
+
 ## 10. Attributes and evaluation order
 
 By default, a function's arguments are evaluated before the function body
@@ -311,7 +358,7 @@ evaluation:
 expr = Hold(f(1) + f(2) + f(6))
 
 rule  = f(x: _) -> x + 10        (* immediate: RHS evaluated once, at match time *)
-rule2 = f(x: _) :> random()       (* delayed: RHS evaluated fresh, per match *)
+rule2 = f(x: _) :> g(x)           (* delayed: RHS substituted unevaluated *)
 
 rewritten = expr /. rule          (* Hold(11 + 12 + 16) -- still held *)
 ReleaseHold(rewritten)             (* 39 -- explicitly re-enters evaluation *)
@@ -330,12 +377,33 @@ ReleaseHold(rewritten)             (* 39 -- explicitly re-enters evaluation *)
 ]                                              (* [11, 200, 13] *)
 ```
 
+- **`//.`** applies rules over and over until nothing changes — a normal
+  form for that rule set. With a delayed rule, this is a small macro
+  expander:
+
+```
+Hold(not(not(not(True)))) //. not(not(a: _)) :> a   (* Hold(not(True)) *)
+```
+
+  Rules that never settle are an error, not a hang: `//.` gives up once
+  either the pass count or the expression's size runs past its limit.
+
 - **`ReleaseHold`** is the single, explicit point where a held expression
-  re-enters normal evaluation.
-- **`->` vs. `:>`** distinguish an RHS computed once, at the moment a rule
-  is applied, from one recomputed per match — relevant whenever the RHS is
-  non-deterministic (`random()`) or has a meaningfully different cost if
-  cached versus recomputed.
+  re-enters normal evaluation. It strips exactly one `Hold`; anything that
+  is not a `Hold` comes back unchanged.
+- **`->` vs. `:>`** distinguish an RHS **computed at match time** from one
+  **substituted unevaluated**. For data, `->` is what you want — it is
+  what turns `x: _ -> x^2` into numbers. For code, `:>` is: an immediate
+  rule evaluates the very expression it was meant to be transforming, and
+  collapses it on first substitution.
+
+**Held expressions capture no environment.** `Hold(expr)` stores the node
+as-is, and `ReleaseHold` evaluates it in the scope it is *released* in —
+so a name rebound between capture and release resolves to its new value.
+This keeps a held expression structurally identical to ordinary data
+(`Hold(f(1)) /. Hold(e: _) -> ...` matches it like anything else), which
+is the whole basis of §6.3's claim that code and data share one
+representation.
 
 **Rationale:** the alternative — Wolfram Language's model, where rewriting
 can be triggered implicitly by evaluation itself via `Unevaluated`,
@@ -530,11 +598,13 @@ that it doesn't.
 3. ~~**Equality and ordering under `Orderless`.**~~ **Closed — moot.**
    `Orderless` was removed from the language (§10), so there is no
    canonical order to specify.
-4. **Scoping of `Hold`-captured free variables.** If a `Hold`-ed expression
-   references a name bound in an enclosing scope, and that name is
-   rebound before `ReleaseHold` runs, which binding does the release see?
-   This interacts with §5 (rebinding is not mutation) and needs an
-   explicit answer before rewriting semantics can be considered settled.
+4. ~~**Scoping of `Hold`-captured free variables.**~~ **Closed.** The
+   release site's binding wins: `Hold` captures no environment, and
+   `ReleaseHold` evaluates in whatever scope it is called from (§11). The
+   alternative — snapshotting the defining environment, as a closure does
+   — would make a held expression a three-element node, which silently
+   stops `Hold(e: _)` from matching it and gives up the shared
+   code/data representation `docs/the kernel.md` §2.3 is built on.
 5. ~~**Multi-argument pipe semantics.**~~ **Closed.** `a` takes first
    position by default, and `$` places it anywhere instead — §13.1.
 6. **Multi-parameter lambdas.** `(a, b) -> ...` does not parse (§8). The

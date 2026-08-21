@@ -90,3 +90,36 @@ def test_delimiters_and_punctuation():
         TokenKind.SEMICOLON,
         TokenKind.EOF,
     ]
+
+
+def test_maximal_munch_across_slash_operators():
+    """`//.` shares a prefix with `//` and `/@`, and `/.` with `/;`. The
+    scan takes the first _MULTI_CHAR_OPS entry that matches, so this pins
+    the ordering that makes all five distinguishable."""
+    assert kinds("a //. b") == [
+        TokenKind.IDENT, TokenKind.REPLACE_REPEATED, TokenKind.IDENT, TokenKind.EOF,
+    ]
+    assert kinds("a // b") == [
+        TokenKind.IDENT, TokenKind.POSTFIX, TokenKind.IDENT, TokenKind.EOF,
+    ]
+    assert kinds("a /. b") == [
+        TokenKind.IDENT, TokenKind.REPLACE, TokenKind.IDENT, TokenKind.EOF,
+    ]
+    assert kinds("a /; b") == [
+        TokenKind.IDENT, TokenKind.CONDITION, TokenKind.IDENT, TokenKind.EOF,
+    ]
+    assert kinds("a /@ b") == [
+        TokenKind.IDENT, TokenKind.MAP, TokenKind.IDENT, TokenKind.EOF,
+    ]
+    assert kinds("a / b") == [
+        TokenKind.IDENT, TokenKind.SLASH, TokenKind.IDENT, TokenKind.EOF,
+    ]
+
+
+def test_bar_and_pipe_stay_distinct():
+    assert kinds("a | b") == [
+        TokenKind.IDENT, TokenKind.BAR, TokenKind.IDENT, TokenKind.EOF,
+    ]
+    assert kinds("a |> b") == [
+        TokenKind.IDENT, TokenKind.PIPE, TokenKind.IDENT, TokenKind.EOF,
+    ]

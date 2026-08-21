@@ -12,6 +12,14 @@ the time). Superseded for everything after the MVP milestone.
 > the kernel now has `first`/`rest`, and predates `Err`, `$` pipe
 > placeholders, `Head`/`Args` and nested `score()`.
 >
+> Its `Hold`/`ReleaseHold`/`:>` deferrals have since been lifted, along
+> with `//.` and the pattern-language additions (`|`, `/;`). One detail it
+> got wrong in anticipation: it assumes `Hold` performs "lexical
+> env-snapshot capture". It does not — `Hold` captures nothing and
+> `ReleaseHold` evaluates in the scope it is released in, which is what
+> keeps a held node structurally identical to ordinary data. See
+> `docs/the language.md` §16.4.
+>
 > For current state:
 > [`docs/capabilities-and-roadmap.md`](docs/capabilities-and-roadmap.md).
 > For the decisions that superseded this:
@@ -686,8 +694,6 @@ three is what let the design docs drift, so they are split here.
 
 **Still pending:**
 
-- `Hold` / `ReleaseHold` with lexical env-snapshot capture; `:>`
-  (`RuleDelayed`).
 - `Dict` and its derived operations.
 - The rest of the derived prelude (`sort_by`, `group_by`, the functional
   combinators, the string layer).

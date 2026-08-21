@@ -98,7 +98,7 @@ don't need kernel-level implementation.
 
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
-| `and`, `or` | `and(a, b, ...)` | `HoldRest` | short-circuiting — `HoldRest` so unevaluated later arguments aren't forced once the result is determined. **Not yet implemented** |
+| `and`, `or` | `and(a, b, ...)` | `HoldRest` | short-circuiting — `HoldRest` so unevaluated later arguments aren't forced once the result is determined. Bool-only, like `not` |
 | `not` | `not(a)` | — | `!` sugar. Bool-only: there is no truthiness, so `!5` is a mistake rather than `False` |
 | `xor` | `xor(a, b)` | — | non-short-circuiting; both sides always needed. **Not yet implemented** |
 
@@ -208,11 +208,11 @@ Both should exist rather than forcing one idiom into the other's job.
 
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
-| `Hold` | `Hold(expr)` | `HoldAll` | primitive; captures unevaluated |
-| `ReleaseHold` | `ReleaseHold(expr)` | — | primitive; re-enters evaluation |
-| `Rule`, `RuleDelayed` | `Rule(lhs, rhs)` | `HoldRest` (`RuleDelayed` only) | underlie `->` / `:>` sugar |
-| `ReplaceAll` | `ReplaceAll(expr, rules)` | — | underlies `/.` sugar |
-| `Attributes` | `Attributes(head)`, `Attributes(head) := [...]` | `HoldFirst` | reads or sets a head's attribute set (kernel doc §8); setting after clauses exist is a definition-time error (language doc §10) |
+| `Hold` | `Hold(expr)` | `HoldAll` | primitive; captures unevaluated, with no environment snapshot |
+| `ReleaseHold` | `ReleaseHold(expr)` | — | primitive; strips one `Hold` and evaluates it **in the scope it is released in**. Total: a non-`Hold` comes back unchanged |
+| `Rule`, `RuleDelayed` | `Rule(lhs, rhs)` | `HoldAll` (both) | underlie `->` / `:>` sugar. `HoldAll` on both, not just `RuleDelayed`: a rule's *pattern* LHS must not evaluate either, or `x: _ -> x^2` could never survive being bound to a name |
+| `ReplaceAll`, `ReplaceRepeated` | `ReplaceAll(expr, rules)` | `HoldRest` | underlie `/.` and `//.` sugar. `HoldRest` for the same reason: the rules arrive unevaluated. A rules argument that is *computed* (a name, a call) is evaluated by these heads before use |
+| `Attributes` | `Attributes(head)`, `Attributes(head) := [...]` | `HoldFirst` | reads or sets a head's attribute set (kernel doc §8); setting after clauses exist is a definition-time error (language doc §10). **Not yet implemented** — see `docs/capabilities-and-roadmap.md` §3.3 |
 | `Head` | `Head(expr)` | — | the expression's head symbol. Total — `Head([])` is `List`, `Head(5)` is `Integer` |
 | `Args` | `Args(expr)` | — | the expression's arguments, as a `List`. `Args(5)` is `[]` |
 

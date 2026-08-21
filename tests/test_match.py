@@ -1,7 +1,21 @@
+import pytest
+
 from minimatic.ast.expression import Expression
-from minimatic.ast.patterns import Blank, BlankNullSeq, BlankSeq, PatternBind
+from minimatic.ast.patterns import (
+    Alternatives,
+    Blank,
+    BlankNullSeq,
+    BlankSeq,
+    Condition,
+    PatternBind,
+)
 from minimatic.ast.symbol import Symbol
-from minimatic.match import check_type, match, match_all
+from minimatic.errors import MinimaticError, MinimaticTypeError
+from minimatic.match import check_type, eval_guard, match, match_all
+
+
+def _greater(a, b):
+    return Expression(Symbol("greater"), a, b)
 
 
 def test_bare_blank_matches_anything():
@@ -78,3 +92,96 @@ def test_check_type_list_and_dict():
     assert check_type(lst, "list") is True
     assert check_type(lst, "dict") is False
     assert check_type(5, "list") is False
+
+
+# -- Alternatives (`p1 | p2`) ------------------------------------------------
+
+
+def test_alternatives_matches_any_branch():
+    pattern = Alternatives((Blank("int"), Blank("string")))
+    assert match(pattern, 5, {}) == {}
+    assert match(pattern, "hi", {}) == {}
+    assert match(pattern, 1.5, {}) is None
+
+
+def test_alternatives_first_matching_branch_wins():
+    # Both branches match; the bindings that come back are the first one's.
+    pattern = Alternatives((PatternBind("a", Blank(None)), PatternBind("b", Blank(None))))
+    assert match(pattern, 5, {}) == {"a": 5}
+
+
+def test_pattern_bind_wraps_the_whole_alternation():
+    pattern = PatternBind("x", Alternatives((Blank("int"), Blank("string"))))
+    assert match(pattern, 5, {}) == {"x": 5}
+    assert match(pattern, "hi", {}) == {"x": "hi"}
+    assert match(pattern, 1.5, {}) is None
+
+
+def test_alternatives_of_literals():
+    pattern = Alternatives((1, 2, 3))
+    assert match(pattern, 2, {}) == {}
+    assert match(pattern, 4, {}) is None
+
+
+def test_sequence_blank_inside_alternatives_never_matches():
+    # Documented limitation: a sequence can only be consumed by _match_seq,
+    # which an Alternatives branch routes around. Fails closed.
+    pattern = Alternatives((BlankSeq(None), Blank("int")))
+    assert match_all((pattern,), (1, 2)) is None
+    assert match_all((pattern,), (1,)) == {}  # matched by the `_int` branch
+
+
+# -- Condition (`pattern /; guard`) -----------------------------------------
+
+
+def test_condition_requires_a_true_guard(ctx):
+    pattern = Condition(PatternBind("x", Blank("int")), _greater(Symbol("x"), 0))
+    assert match(pattern, 5, {}, ctx) == {"x": 5}
+    assert match(pattern, -5, {}, ctx) is None
+
+
+def test_condition_fails_when_the_inner_pattern_fails(ctx):
+    pattern = Condition(Blank("int"), True)
+    assert match(pattern, "hi", {}, ctx) is None
+
+
+def test_guard_sees_bindings_from_earlier_arguments(ctx):
+    patterns = (
+        PatternBind("lo", Blank("int")),
+        Condition(PatternBind("hi", Blank("int")), _greater(Symbol("hi"), Symbol("lo"))),
+    )
+    assert match_all(patterns, (1, 5), ctx=ctx) == {"lo": 1, "hi": 5}
+    assert match_all(patterns, (5, 1), ctx=ctx) is None
+
+
+def test_guard_sees_the_enclosing_scope(ctx):
+    ctx.env.set_here("threshold", 10)
+    pattern = Condition(PatternBind("x", Blank("int")), _greater(Symbol("x"), Symbol("threshold")))
+    assert match(pattern, 42, {}, ctx) == {"x": 42}
+    assert match(pattern, 4, {}, ctx) is None
+
+
+def test_guard_on_a_sequence_blank(ctx):
+    patterns = (
+        Condition(
+            PatternBind("xs", BlankSeq(None)),
+            _greater(Expression(Symbol("length"), Symbol("xs")), 2),
+        ),
+    )
+    assert match_all(patterns, (1, 2, 3), ctx=ctx) == {"xs": Expression(Symbol("List"), 1, 2, 3)}
+    assert match_all(patterns, (1, 2), ctx=ctx) is None
+
+
+def test_non_bool_guard_raises(ctx):
+    with pytest.raises(MinimaticTypeError):
+        match(Condition(Blank(None), 1), 5, {}, ctx)
+
+
+def test_guard_without_a_context_raises():
+    with pytest.raises(MinimaticError):
+        match(Condition(Blank(None), True), 5, {})
+
+
+def test_eval_guard_is_reusable_on_its_own(ctx):
+    assert eval_guard(_greater(Symbol("n"), 0), {"n": 3}, ctx) is True
+    assert eval_guard(_greater(Symbol("n"), 0), {"n": -3}, ctx) is False

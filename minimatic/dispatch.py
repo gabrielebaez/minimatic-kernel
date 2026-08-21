@@ -21,7 +21,14 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .ast.expression import Expression
-from .ast.patterns import Blank, BlankNullSeq, BlankSeq, PatternBind
+from .ast.patterns import (
+    Alternatives,
+    Blank,
+    BlankNullSeq,
+    BlankSeq,
+    Condition,
+    PatternBind,
+)
 from .ast.symbol import Symbol
 from .errors import (
     ArityError,
@@ -30,7 +37,7 @@ from .errors import (
     MinimaticTypeError,
     NoMatchingClauseError,
 )
-from .match import match_all
+from .match import eval_guard, match_all
 
 # Python exceptions a builtin may raise that mean "bad data", as opposed to
 # "the kernel has a bug". Deliberately narrow: AttributeError and friends
@@ -51,6 +58,17 @@ def _score_one(pattern) -> tuple:
     """
     if isinstance(pattern, PatternBind):
         return _score_one(pattern.pattern)
+    if isinstance(pattern, Condition):
+        # A guard narrows at runtime, not in shape. Scoring it above its
+        # inner pattern would claim a specificity that `overlaps`-style
+        # static reasoning cannot see and that ordering cannot honour —
+        # so a guarded clause and its unguarded twin tie, and resolve by
+        # declaration order (see ClauseSet.define).
+        return _score_one(pattern.pattern)
+    if isinstance(pattern, Alternatives):
+        # Only as specific as the weakest branch: `_int | _` accepts
+        # everything `_` accepts, so it cannot outrank `_`.
+        return min(_score_one(p) for p in pattern.patterns)
     if isinstance(pattern, (BlankSeq, BlankNullSeq)):
         return (0,)
     if isinstance(pattern, Blank):
@@ -95,6 +113,9 @@ class Clause:
     body: object = None
     py_fn: Callable | None = None
     pass_ctx: bool = False
+    # A clause-level `/;` guard (`f(x: _) /; x > 0 := ...`), evaluated
+    # after the argument patterns match. None for an unguarded clause.
+    guard: object | None = None
     specificity: tuple = field(default=())
     order: int = 0
     # Cached at definition time, used only on the failure path (see
@@ -108,7 +129,9 @@ class ClauseSet:
         self.clauses: list[Clause] = []
         self.sealed = False
 
-    def define(self, arg_patterns, *, body=None, py_fn=None, pass_ctx=False) -> Clause:
+    def define(
+        self, arg_patterns, *, body=None, py_fn=None, pass_ctx=False, guard=None
+    ) -> Clause:
         if self.sealed:
             raise HeadAlreadySealedError(self.head_name)
         clause = Clause(
@@ -116,6 +139,7 @@ class ClauseSet:
             body=body,
             py_fn=py_fn,
             pass_ctx=pass_ctx,
+            guard=guard,
             specificity=score(tuple(arg_patterns)),
             order=len(self.clauses),
             signature=inspect.signature(py_fn) if py_fn is not None else None,
@@ -126,6 +150,14 @@ class ClauseSet:
         # appended in declaration order, so ties preserve it on their own —
         # no secondary key needed. (Negating the score, as this used to do,
         # is not possible now that a score is a nested tuple.)
+        #
+        # A guarded clause scores exactly as its unguarded twin does, so
+        # the two tie and declaration order decides: **guarded clauses must
+        # be written first**. That is deliberate. A guard's narrowness is a
+        # runtime fact, and there is nowhere in a per-argument specificity
+        # vector to record "and also this predicate holds" — inventing a
+        # guarded-beats-unguarded tiebreak would order clauses by something
+        # `score()` cannot actually compare.
         self.clauses.sort(key=lambda c: c.specificity, reverse=True)
         return clause
 
@@ -133,8 +165,12 @@ class ClauseSet:
         self.sealed = True
         args = tuple(args)
         for clause in self.clauses:
-            bindings = match_all(clause.arg_patterns, args)
+            bindings = match_all(clause.arg_patterns, args, ctx=ctx)
             if bindings is None:
+                continue
+            if clause.guard is not None and not eval_guard(clause.guard, bindings, ctx):
+                # Fall through to the next clause, never raise: a guard
+                # that says "not this one" is an ordinary dispatch outcome.
                 continue
             if clause.py_fn is not None:
                 return self._call_py(clause, args, ctx)

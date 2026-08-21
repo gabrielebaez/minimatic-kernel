@@ -1,9 +1,15 @@
 import pytest
 
 from minimatic.ast.expression import Expression
-from minimatic.ast.patterns import Blank, BlankSeq, PatternBind
+from minimatic.ast.patterns import (
+    Alternatives,
+    Blank,
+    BlankSeq,
+    Condition,
+    PatternBind,
+)
 from minimatic.ast.symbol import Symbol
-from minimatic.errors import NotImplementedInMVPError
+from minimatic.errors import MinimaticSyntaxError
 from minimatic.parser import parse
 
 
@@ -152,9 +158,77 @@ def test_flagship_pipeline_parses():
     assert fold_call == Expression(Symbol("fold"), Symbol("plus"), 0)
 
 
-def test_delayed_rule_not_implemented():
-    with pytest.raises(NotImplementedInMVPError):
-        parse('x /. "N/A" :> 0')
+def test_delayed_rule_builds_rule_delayed():
+    tree = parse('x /. "N/A" :> 0')
+    assert tree == Expression(
+        Symbol("ReplaceAll"), Symbol("x"), Expression(Symbol("RuleDelayed"), "N/A", 0)
+    )
+
+
+def test_delayed_arrow_is_never_a_lambda():
+    """`x -> b` is a Lambda because its LHS is a bare Symbol; `x :> b` must
+    not be, or a delayed rule with a one-symbol pattern would be
+    unwritable."""
+    assert parse("x -> b").head == Symbol("Lambda")
+    assert parse("x :> b").head == Symbol("RuleDelayed")
+
+
+def test_replace_repeated_desugaring():
+    assert parse("a //. r") == Expression(
+        Symbol("ReplaceRepeated"), Symbol("a"), Symbol("r")
+    )
+    assert parse("a /. r") == Expression(Symbol("ReplaceAll"), Symbol("a"), Symbol("r"))
+
+
+def test_rule_argument_may_be_a_bare_expression():
+    """`expr /. rule` — the rule is computed, not written out. Resolved at
+    evaluation time, so the parser must let it through."""
+    assert parse("expr /. rule").tail[1] == Symbol("rule")
+    assert parse("expr /. [r1, r2]").tail[1] == Expression(
+        Symbol("List"), Symbol("r1"), Symbol("r2")
+    )
+
+
+def test_dict_entry_still_requires_an_arrow():
+    with pytest.raises(MinimaticSyntaxError):
+        parse("{k}")
+
+
+def test_alternatives_binds_tighter_than_pattern_bind():
+    assert parse("x: _int | _string") == PatternBind(
+        "x", Alternatives((Blank("int"), Blank("string")))
+    )
+
+
+def test_alternatives_of_literals():
+    assert parse("1 | 2 | 3") == Alternatives((1, 2, 3))
+
+
+def test_condition_covers_the_whole_comparison():
+    assert parse("f(x: _int /; x > 0)") == Expression(
+        Symbol("f"),
+        Condition(
+            PatternBind("x", Blank("int")),
+            Expression(Symbol("greater"), Symbol("x"), 0),
+        ),
+    )
+
+
+def test_clause_level_condition_sits_under_set_delayed():
+    tree = parse("f(x: _) /; x > 0 := b")
+    assert tree.head == Symbol("SetDelayed")
+    lhs, body = tree.tail
+    assert body == Symbol("b")
+    assert isinstance(lhs, Condition)
+    assert lhs.pattern == Expression(Symbol("f"), PatternBind("x", Blank(None)))
+    assert lhs.guard == Expression(Symbol("greater"), Symbol("x"), 0)
+
+
+def test_condition_binds_tighter_than_arrow():
+    tree = parse('x /. "N/A" /; True -> 0')
+    rule = tree.tail[1]
+    assert rule.head == Symbol("Rule")
+    assert rule.tail[0] == Condition("N/A", True)
 
 
 def test_replace_all_with_pattern_bind():
