@@ -114,6 +114,8 @@ Statuses below mean exactly one of four things:
 | Structure inspection (`Head`, `Args`) | working |
 | `not` / `!`, `and`, `or` | working |
 | `Hold` / `ReleaseHold` / delayed rules (`:>`) | working |
+| Dicts (`{k -> v}` literal, canonically ordered, and the `key_*` heads) | working |
+| Indexing (`xs[0]`, `d["k"]`, `xs[1] <- 5`) | not started |
 | `Attributes(f) := HoldAll` (user-declared hold heads) | deferred |
 | Ambiguity detection at definition time (`overlaps`/`implies`) | **removed** ([§2.1](docs/proposal-001-dispatch-results-and-pipes.md)) |
 | `Flat` / `Orderless` attributes | **removed** ([§2.3](docs/proposal-001-dispatch-results-and-pipes.md)) |
@@ -167,9 +169,9 @@ prioritize.
 The three design docs have been reconciled with proposal 001 and with the
 pattern-language work, and describe the language as it now stands. They
 remain *design* documents: where they specify something not yet built —
-indexing, `Attributes(f) := …`, `Dict`, the string layer — they describe
-the intended language, and `docs/capabilities-and-roadmap.md` is the
-record of which parts exist today.
+indexing, `Attributes(f) := …`, the string layer — they describe the
+intended language, and `docs/capabilities-and-roadmap.md` is the record of
+which parts exist today.
 
 > **Except the 15-minute walkthrough**, which still predates proposal 001:
 > it teaches `Flat`/`Orderless` (removed) and `Ok` (replaced by

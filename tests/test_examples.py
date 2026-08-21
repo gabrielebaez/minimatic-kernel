@@ -22,10 +22,16 @@ def _hold(inner):
     return Expression(Symbol("Hold"), inner)
 
 
+def _dict(*pairs):
+    return Expression(
+        Symbol("Dict"), *(Expression(Symbol("Rule"), k, v) for k, v in pairs)
+    )
+
+
 def test_tour_runs_without_error_and_produces_expected_results(kernel):
     results = kernel.eval_file(str(TOUR_PATH))
 
-    assert len(results) == 82
+    assert len(results) == 105
 
     # describe(5), describe("hi"), describe(3.14) — after 3 SetDelayed clauses
     assert results[3] == "an integer"
@@ -128,3 +134,35 @@ def test_tour_runs_without_error_and_produces_expected_results(kernel):
     # `//.` to a normal form, then released
     assert results[80] == _hold(Expression(Symbol("not"), True))
     assert results[81] is False
+
+    # dicts: the literal sorts, and order-different literals are equal
+    assert results[82] == _dict(("Green", 2), ("Orange", 1))
+    assert results[84] is True
+
+    # reading
+    assert results[85] == _list("Green", "Orange")
+    assert results[86] == _list(2, 1)
+    assert results[87] == 2
+    assert results[88] is True
+    assert results[89] == 2
+    assert results[90].head == Symbol("Err")
+    assert results[90].tail[0] == "KeyNotFound"
+    assert results[91] == 0  # the Err unwrapped to a default
+
+    # updates return new dicts; `stock` itself is untouched
+    assert results[92] == _dict(("Blue", 10), ("Green", 2), ("Orange", 1))
+    assert results[93] == _dict(("Green", 2))
+    assert results[94] == _dict(("Green", 2), ("Orange", 1))
+
+    # merge is right-biased; map_values transforms in place
+    assert results[95] == _dict(("Blue", 10), ("Green", 99), ("Orange", 1))
+    assert results[96] == _dict(("Green", 200), ("Orange", 100))
+
+    # to_pairs / from_pairs round trip
+    assert results[98] == results[82]
+
+    # a dict is an ordinary expression
+    assert results[99] == Symbol("Dict")
+    assert results[100] == _dict(("a", 0))
+    assert results[103] == "pen"
+    assert results[104] == "no cost"  # exact match only, no subset matching

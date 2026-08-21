@@ -145,17 +145,23 @@ host-registered heads.
 
 ## 6. Dict (derived, atop a small primitive core)
 
+Signatures here are **subject-first** — `map_values(d, f)`, not
+`map_values(f, d)` — matching the kernel and the pipe: `d |> map_values(f)`
+splices `d` into first position. §5's list rows are still written
+function-first; that is pre-existing drift from the kernel, recorded here
+rather than silently corrected in a dict change.
+
 | Head | Signature | Attributes | Notes |
 |---|---|---|---|
-| `Dict` | `Dict(Rule(k, v), ...)` | — | the `{...}` literal's head |
-| `keys`, `values` | `keys(d)`, `values(d)` | — | returns `List` |
-| `key_get` | `key_get(d, k)` | — | the value, or `Err("KeyNotFound", _)` — `d[k]` sugar instead raises for missing keys, matching list indexing's error behavior; `key_get` is the `Err`-returning alternative for pipelines |
+| `Dict` | `Dict(Rule(k, v), ...)` | — | the `{...}` literal's head. Entries are deduplicated and key-sorted at construction, so a dict's structural identity matches its value (language doc §6.1); duplicates resolve last-wins. Evaluates its own keys and values, which no other constructor must do — `Rule` is `HoldAll`, so a literal's entries arrive held |
+| `keys`, `values` | `keys(d)`, `values(d)` | — | returns `List`, in canonical order |
+| `key_get` | `key_get(d, k)` | — | the value, or `Err("KeyNotFound", _)`. The `d[k]` sugar this was meant to complement — raising for a missing key, matching list indexing — **does not exist**; `key_get` is currently the only accessor |
 | `key_set` | `key_set(d, k, v)` | — | new dict |
-| `key_drop` | `key_drop(d, k)` | — | new dict |
+| `key_drop` | `key_drop(d, k)` | — | new dict; total — dropping an absent key returns the dict unchanged |
 | `has_key` | `has_key(d, k)` | — | `HasKeyQ` was considered and rejected — reads worse |
 | `merge` | `merge(d1, d2, ...)` | — | right-biased on conflicting keys |
-| `map_values`, `map_keys` | `map_values(f, d)` | — | |
-| `to_pairs`, `from_pairs` | `to_pairs(d)` | — | `Dict` ⇄ `List` of `Rule`s, for reuse of list combinators on dicts |
+| `map_values`, `map_keys` | `map_values(d, f)`, `map_keys(d, f)` | — | `map_keys` collapsing two keys onto one resolves last-wins |
+| `to_pairs`, `from_pairs` | `to_pairs(d)`, `from_pairs(xs)` | — | `Dict` ⇄ `List` of `Rule`s, for reuse of list combinators on dicts. `from_pairs` does *not* evaluate its entries (unlike `Dict`): its argument is ordinary evaluated data, and re-evaluating would break the round trip for any dict holding a closure |
 
 ## 7. String (derived, atop a small primitive core)
 
@@ -192,7 +198,7 @@ boolean argument implies.
 | Head | Signature | Notes |
 |---|---|---|
 | `IntQ`, `FloatQ`, `StringQ`, `BoolQ`, `ListQ`, `DictQ`, `FunctionQ` | `ListQ(x)` | correspond to the pattern type tags (`_int`, `_string`, ...) — `ListQ(x) == MatchQ(x, _list)`, provided as a convenience, not a separate mechanism |
-| `EmptyQ` | `EmptyQ(x)` | works over `List`, `Dict`, and `String` uniformly |
+| `EmptyQ` | `EmptyQ(x)` | works over `List`, `Dict`, and `String` uniformly. Implemented; the rest of this table is not |
 | `MatchQ` | `MatchQ(x, pattern)` | primitive — direct kernel support (kernel doc §5) |
 | `match` | `match(x, pattern)` | destructuring match, returns bindings as a `Dict`, or `Err("NoMatch", _)` |
 | `Cases` | `Cases(xs, pattern)` | returns the sublist of `xs` matching `pattern` — the `filter`/`MatchQ` combination made convenient, in the spirit of Wolfram's `Cases` |

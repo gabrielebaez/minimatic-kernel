@@ -30,6 +30,7 @@ from .ast.patterns import (
     PatternBind,
 )
 from .ast.symbol import Symbol
+from .dict_ops import canonicalize_dict_patterns
 from .errors import (
     ArityError,
     HeadAlreadySealedError,
@@ -134,8 +135,10 @@ class ClauseSet:
     ) -> Clause:
         if self.sealed:
             raise HeadAlreadySealedError(self.head_name)
+        # Dict literals in the pattern are sorted here, the same way a
+        # dict value is sorted when it is built -- see dict_ops.
         clause = Clause(
-            arg_patterns=tuple(arg_patterns),
+            arg_patterns=tuple(canonicalize_dict_patterns(p) for p in arg_patterns),
             body=body,
             py_fn=py_fn,
             pass_ctx=pass_ctx,

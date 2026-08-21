@@ -3,6 +3,7 @@
 **Date:** 2026-08-21
 **Status:** Assessment of the kernel after the pattern-language and
 rewriting work (guards, alternatives, `Hold`/`ReleaseHold`, `:>`, `//.`)
+and the `Dict` layer
 **Scope:** what the language does today, what it could do once the missing
 heads exist, and what would still be missing after that
 
@@ -28,17 +29,19 @@ already working.
 
 ## 2. What works today
 
-50 registered heads:
+63 registered heads:
 
 ```
-Args CompoundExpression Err Head Hold Lambda List Range ReleaseHold
-ReplaceAll ReplaceRepeated Rule RuleDelayed Set SetDelayed __pipe__ and
-append catch divide each equal finally first fold for greater greater_eq if
-is_err length less less_eq map minus mod negate not not_equal or plus power
-print recover rest switch times unwrap unwrap_err which
+Args CompoundExpression Dict EmptyQ Err Head Hold Lambda List Range
+ReleaseHold ReplaceAll ReplaceRepeated Rule RuleDelayed Set SetDelayed
+__pipe__ and append catch divide each equal finally first fold for
+from_pairs greater greater_eq has_key if is_err key_drop key_get key_set
+keys length less less_eq map map_keys map_values merge minus mod negate not
+not_equal or plus power print recover rest switch times to_pairs unwrap
+unwrap_err values which
 ```
 
-Working and covered by 245 tests:
+Working and covered by 296 tests:
 
 - **Evaluation** — strict, single-pass, `head(args)` all the way down. No
   special forms: `if`/`switch`/`which`/`for`/`each`/`;` are ordinary heads
@@ -59,6 +62,8 @@ Working and covered by 245 tests:
 - **Errors as values** — `Err(kind, detail)`, pipe short-circuiting,
   `catch`/`recover`/`finally`/`unwrap`/`unwrap_err`/`is_err`. No `Ok`
   wrapper.
+- **Dicts** — the `{k -> v}` literal, canonically ordered so equality and
+  structural matching agree, plus the ten §6 heads, `length` and `EmptyQ`.
 - **Structure inspection** — `Head`, `Args`, total over every value.
 - **Host integration** — `register_head`, and Markdown files as runnable
   scripts.
@@ -147,8 +152,11 @@ a head of their own that holds its arguments.
 
 ### 3.5 Smaller core gaps
 
-- **Indexing is unimplemented.** `xs[0]` is a syntax error, though
-  `docs/the language.md` §6.1 advertises `myList[0]` and `myList[1] <- 5`.
+- **Indexing is unimplemented.** `xs[0]` and `d["k"]` are syntax errors,
+  though `docs/the language.md` §6.1 advertises them. It is not just a
+  missing head: postfix `[...]` would end the parser's "statements are
+  self-delimiting" property, which `parse_all` and every Markdown script
+  rely on, so it needs a statement-separator decision first.
 - **Sequence blanks only work in final position.** `f(a: __, z: _)` never
   matches — a documented simplification in `match.py`. A sequence blank
   inside an alternation (`__ | _int`) does not match either, for the same
@@ -160,8 +168,8 @@ a head of their own that holds its arguments.
 
 ## 4. Assuming every missing head lands
 
-The head-level gaps are large in volume but ordinary in nature: `Dict` (the
-literal already parses), the entire string layer, most of the list layer
+The head-level gaps are large in volume but ordinary in nature: the entire
+string layer, most of the list layer
 (`filter`, `sort`, `zip`, `unique`, `group_by`, `find`, `concat`, `take`,
 `drop`, …), the meta heads (`MatchQ`, `match`, `Cases`, type predicates),
 `and`/`or`/`xor`, the numeric helpers, I/O, and the functional combinators.
@@ -197,8 +205,8 @@ documentation already describes.**
    enables user-level macros, and removes a statement that currently fails
    silently. Small, and it stops the docs lying about a core guarantee.
 
-3. **Prelude build-out.** `Dict`, strings, the rest of the list layer, type
-   predicates, `MatchQ`/`match`/`Cases`, `and`/`or`. The largest volume of
+3. **Prelude build-out.** Strings, the rest of the list layer, type
+   predicates, `MatchQ`/`match`/`Cases`. The largest volume of
    work and the most user-visible value, unblocked by (1). Much of it can
    be written in Minimatic per §2.1, within the §3.2 size limit.
 
@@ -222,7 +230,7 @@ what shipped — remains outstanding. Several gaps above are only visible
 ## 6. Reproducing this
 
 ```bash
-uv run pytest                              # 245 passing
+uv run pytest                              # 296 passing
 uv run python -m minimatic examples/tour.md
 ```
 
