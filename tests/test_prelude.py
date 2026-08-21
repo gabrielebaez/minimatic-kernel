@@ -199,3 +199,45 @@ def test_range_desugars_to_half_open_list(kernel):
 def test_for_over_range(kernel):
     # docs/the language.md's own for(0..5, y -> print(y)) example
     assert kernel.eval("for(0 .. 5, y -> print(y))") is None
+
+
+# -- and / or ----------------------------------------------------------------
+
+
+def test_and_or_value_tables(kernel):
+    assert kernel.eval("and(True, True)") is True
+    assert kernel.eval("and(True, False)") is False
+    assert kernel.eval("and(False, True)") is False
+    assert kernel.eval("or(False, False)") is False
+    assert kernel.eval("or(False, True)") is True
+    assert kernel.eval("or(True, False)") is True
+
+
+def test_and_or_are_variadic(kernel):
+    assert kernel.eval("and(True, True, True)") is True
+    assert kernel.eval("and(True, True, False)") is False
+    assert kernel.eval("or(False, False, True)") is True
+
+
+def test_and_or_short_circuit(kernel):
+    """HoldRest, so a later argument that would fail is never evaluated."""
+    assert kernel.eval("and(False, undefined_head(1))") is False
+    assert kernel.eval("or(True, undefined_head(1))") is True
+
+
+def test_and_or_are_bool_strict(kernel):
+    import pytest
+
+    from minimatic.errors import MinimaticTypeError
+
+    with pytest.raises(MinimaticTypeError):
+        kernel.eval("and(1, True)")
+    with pytest.raises(MinimaticTypeError):
+        kernel.eval("or(False, 1)")
+
+
+def test_and_composes_with_a_clause_guard(kernel):
+    kernel.eval('in_range(n: _int) /; and(n > 0, n < 10) := "yes"')
+    kernel.eval('in_range(n: _int) := "no"')
+    assert kernel.eval("in_range(5)") == "yes"
+    assert kernel.eval("in_range(50)") == "no"

@@ -1,8 +1,8 @@
 # Minimatic — Capabilities and Roadmap
 
-**Date:** 2026-08-14
-**Status:** Assessment of the kernel at `676eb20`, after proposal 001's
-code phases
+**Date:** 2026-08-21
+**Status:** Assessment of the kernel after the pattern-language and
+rewriting work (guards, alternatives, `Hold`/`ReleaseHold`, `:>`, `//.`)
 **Scope:** what the language does today, what it could do once the missing
 heads exist, and what would still be missing after that
 
@@ -28,16 +28,17 @@ already working.
 
 ## 2. What works today
 
-44 registered heads:
+50 registered heads:
 
 ```
-Args CompoundExpression Err Head Lambda List Range ReplaceAll Rule Set
-SetDelayed __pipe__ append catch divide each equal finally first fold for
-greater greater_eq if is_err length less less_eq map minus mod negate not
-not_equal plus power print recover rest switch times unwrap unwrap_err which
+Args CompoundExpression Err Head Hold Lambda List Range ReleaseHold
+ReplaceAll ReplaceRepeated Rule RuleDelayed Set SetDelayed __pipe__ and
+append catch divide each equal finally first fold for greater greater_eq if
+is_err length less less_eq map minus mod negate not not_equal or plus power
+print recover rest switch times unwrap unwrap_err which
 ```
 
-Working and covered by 189 tests:
+Working and covered by 245 tests:
 
 - **Evaluation** — strict, single-pass, `head(args)` all the way down. No
   special forms: `if`/`switch`/`which`/`for`/`each`/`;` are ordinary heads
@@ -46,12 +47,15 @@ Working and covered by 189 tests:
   nested compound patterns. Declaration order breaks only exact ties.
 - **Patterns** — blanks, typed blanks (`_int`, `_list`, `_err`, …),
   sequence blanks, named binds, compound patterns whose head is pinned
-  literally.
+  literally, alternatives (`_int | _string`), and guards (`/;`) at both
+  argument and clause level.
 - **Functions** — closures, currying, higher-order use, recursion, mutual
   recursion.
 - **Pipes** — `|>` and `//`, with `$` placeholders for argument position;
   `/@` for map.
-- **Rewriting** — `/.` over evaluated data, with single rules or rule lists.
+- **Rewriting** — `/.` and `//.` (to a normal form) over both evaluated
+  data and `Hold`-captured code, with immediate (`->`) or delayed (`:>`)
+  rules, written out or held in a variable.
 - **Errors as values** — `Err(kind, detail)`, pipe short-circuiting,
   `catch`/`recover`/`finally`/`unwrap`/`unwrap_err`/`is_err`. No `Ok`
   wrapper.
@@ -133,25 +137,22 @@ behavior, and states there is "exactly one hold mechanism" available
 Today hold attributes are Python-side only: **a Minimatic-level user cannot
 write a macro at all.** Failing quietly makes this the worst of the gaps.
 
-### 3.4 No `Hold`, so `/.` only ever sees evaluated data
+### 3.4 ~~No `Hold`~~ — closed
 
-The design docs' symbolic examples cannot run:
-
-```
-[f(1), g(2)] /. f(x: _) -> x + 10
-```
-
-`f(1)` evaluates before the rule is applied, so the rule never meets the
-shape it was written for. The README's "powerful enough to feel like a
-symbolic language" is, at present, about rewriting *data* — which the
-flagship `"N/A" -> 0` example does well, and which is a different claim.
+`Hold`, `ReleaseHold`, `:>` and `//.` now ship, so `/.` reaches unevaluated
+code as well as data and the design docs' symbolic examples run as written.
+What remains a limit is §3.3: rewriting is the *only* way to see an
+unevaluated expression, because a Minimatic-level user still cannot declare
+a head of their own that holds its arguments.
 
 ### 3.5 Smaller core gaps
 
 - **Indexing is unimplemented.** `xs[0]` is a syntax error, though
   `docs/the language.md` §6.1 advertises `myList[0]` and `myList[1] <- 5`.
 - **Sequence blanks only work in final position.** `f(a: __, z: _)` never
-  matches — a documented simplification in `match.py`.
+  matches — a documented simplification in `match.py`. A sequence blank
+  inside an alternation (`__ | _int`) does not match either, for the same
+  structural reason.
 - **No literal-symbol patterns.** A bare symbol in a pattern always binds,
   which is what blocked symbol-valued `Err` kinds.
 
@@ -178,7 +179,6 @@ computation workbench" the language positions itself as.
 | Write a two-argument callback without naming it | §3.1 |
 | Process more than a few hundred elements in Minimatic-level code | §3.2 |
 | Define a macro, or any head that sees unevaluated arguments | §3.3 |
-| Manipulate expressions symbolically | §3.4 |
 | Index a list | §3.5 |
 
 Put plainly: **the Prelude is what stands between Minimatic and being
@@ -202,10 +202,11 @@ documentation already describes.**
    work and the most user-visible value, unblocked by (1). Much of it can
    be written in Minimatic per §2.1, within the §3.2 size limit.
 
-4. **`Hold` / `ReleaseHold` / `:>`** (§3.4). The symbolic layer. Its open
-   questions — `docs/the kernel.md` §14.4 (error identity through `Hold`)
-   and `docs/the language.md` §16.4 (scoping of held free variables) — have
-   been deferred four times and need settling before implementation.
+4. ~~**`Hold` / `ReleaseHold` / `:>`**~~ **Done.** Both open questions
+   were settled in the process: `docs/the language.md` §16.4 (a release
+   evaluates in the scope it is released in — `Hold` captures nothing) and
+   `docs/the kernel.md` §14.4 (a delayed RHS is never evaluated during
+   rewriting, so nothing changes about error identity).
 
 5. **Recursion depth** (§3.2). At minimum convert `RecursionError` into a
    `MinimaticError` so it stops escaping; properly, trampoline self-calls
@@ -221,7 +222,7 @@ what shipped — remains outstanding. Several gaps above are only visible
 ## 6. Reproducing this
 
 ```bash
-uv run pytest                              # 189 passing
+uv run pytest                              # 245 passing
 uv run python -m minimatic examples/tour.md
 ```
 

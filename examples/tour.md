@@ -220,9 +220,104 @@ triple /@ inc /@ [1, 2, 3]
 triple /@ [1, 2, 3] // fold(plus, 0)
 ```
 
+## Guards and alternatives: patterns that describe more than shape
+
+A pattern says what an argument *looks like*. Two constructs let it say
+more than that.
+
+`p1 | p2` matches either shape:
+
+```minimatic
+tag(v: _int | _string) := "scalar"
+tag(v: _list)          := "list"
+tag(v: _)              := "something else"
+
+tag(42)
+tag("hi")
+tag([1, 2])
+tag(3.14)
+```
+
+`/;` adds a guard — an ordinary boolean expression, evaluated against the
+names the pattern just bound. Written after the whole clause head, it
+selects between clauses that are the same shape but differ by value:
+
+```minimatic
+polarity(n: _int) /; n < 0  := "negative"
+polarity(n: _int) /; n == 0 := "zero"
+polarity(n: _int)           := "positive"
+
+polarity(-2)
+polarity(0)
+polarity(7)
+```
+
+A guard can also sit on a single argument, and can see the other
+arguments bound before it:
+
+```minimatic
+ordered(lo: _int, hi: _int) /; hi > lo := "ok"
+ordered(lo: _int, hi: _int)            := "swapped"
+
+ordered(1, 5)
+ordered(5, 1)
+```
+
+Guards score exactly as their unguarded shape does — a guard narrows at
+run time, which specificity cannot see — so **guarded clauses must be
+written first**, as above. Declared after the catch-all, a guarded clause
+is unreachable.
+
+## `Hold` and `ReleaseHold`: code as data
+
+Everything so far rewrites *data*: by the time `/.` runs, its subject has
+already been evaluated. `Hold` is how you get an expression that hasn't
+been, so a rule can meet the shape it was written for.
+
+```minimatic
+expr = Hold(f(1) + f(2) + f(6))
+
+rule = f(x: _) -> x + 10
+
+rewritten = expr /. rule
+ReleaseHold(rewritten)
+```
+
+`f` is never defined anywhere — `Hold` captures the call without looking
+at it, `/.` rewrites the three `f(...)` nodes in place, and `ReleaseHold`
+is the one explicit point where the result re-enters evaluation.
+
+A held expression is an ordinary two-element expression with no captured
+environment, so patterns match it like any other value, and `ReleaseHold`
+evaluates in the scope it is released in:
+
+```minimatic
+Hold(f(1)) /. Hold(e: _) -> "was held"
+```
+
+`->` computes its right-hand side at the moment the rule matches, which is
+what you want for data. `:>` substitutes it unevaluated, which is what you
+want for code:
+
+```minimatic
+Hold(g(1)) /. g(a: _) -> a + 1
+Hold(g(1)) /. g(a: _) :> a + 1
+```
+
+`//.` applies rules over and over until nothing changes — a normal form.
+With a delayed rule, that is a small macro expander:
+
+```minimatic
+Hold(not(not(not(True)))) //. not(not(a: _)) :> a
+ReleaseHold(Hold(not(not(not(True)))) //. not(not(a: _)) :> a)
+```
+
+Rules that never settle are an error, not a hang: `//.` gives up once the
+passes or the expression size run past their limits.
+
 ---
 
 This is all MVP-stage behavior — see `IMPLEMENTATION_PLAN.md` and the
 README's status table for what's deferred (ambiguity detection, `Flat`/
-`Orderless`, `Hold`/`ReleaseHold`, `Ok`/`Err`). Nothing above depends on
-any of that.
+`Orderless`, `Ok`, `Dict`, the string layer). Nothing above depends on any
+of that.

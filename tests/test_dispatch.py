@@ -114,3 +114,84 @@ def test_clause_set_seals_after_first_dispatch(kernel):
     kernel.eval("once(1)")  # first dispatch seals the clause set
     with pytest.raises(HeadAlreadySealedError):
         kernel.eval('once(x: _int) := "too late"')
+
+
+# -- clause guards (`f(...) /; g := ...`) ------------------------------------
+
+
+def test_guarded_clauses_select_by_runtime_value(kernel):
+    kernel.eval('classify(n: _int) /; n < 0 := "negative"')
+    kernel.eval('classify(n: _int) /; n == 0 := "zero"')
+    kernel.eval('classify(n: _int) := "positive"')
+
+    assert kernel.eval("classify(-2)") == "negative"
+    assert kernel.eval("classify(0)") == "zero"
+    assert kernel.eval("classify(7)") == "positive"
+
+
+def test_failing_guard_falls_through_rather_than_raising(kernel):
+    kernel.eval('only_big(n: _int) /; n > 100 := "big"')
+    kernel.eval('only_big(n: _int) := "small"')
+    assert kernel.eval("only_big(1)") == "small"
+
+
+def test_no_clause_survives_its_guard(kernel):
+    kernel.eval('picky(n: _int) /; n > 100 := "big"')
+    with pytest.raises(NoMatchingClauseError):
+        kernel.eval("picky(1)")
+
+
+def test_guarded_clause_must_be_declared_first(kernel):
+    """A guard narrows at runtime, which specificity scoring cannot see, so
+    a guarded clause ties with its unguarded twin and declaration order
+    decides. Declared second, the guard is unreachable — pinned here so the
+    behaviour is a documented rule rather than a surprise."""
+    kernel.eval('backwards(n: _int) := "catch-all"')
+    kernel.eval('backwards(n: _int) /; n < 0 := "negative"')
+    assert kernel.eval("backwards(-2)") == "catch-all"
+
+
+def test_argument_level_guard(kernel):
+    kernel.eval('sign(x: _int /; x > 0) := "+"')
+    kernel.eval('sign(x: _int) := "-"')
+    assert kernel.eval("sign(3)") == "+"
+    assert kernel.eval("sign(-3)") == "-"
+
+
+def test_guard_may_reference_other_arguments(kernel):
+    kernel.eval('ordered(lo: _int, hi: _int) /; hi > lo := "ok"')
+    kernel.eval('ordered(lo: _int, hi: _int) := "swapped"')
+    assert kernel.eval("ordered(1, 5)") == "ok"
+    assert kernel.eval("ordered(5, 1)") == "swapped"
+
+
+# -- alternatives in clause heads --------------------------------------------
+
+
+def test_alternatives_clause_head(kernel):
+    kernel.eval('tag(v: _int | _string) := "scalar"')
+    kernel.eval('tag(v: _) := "other"')
+    assert kernel.eval("tag(1)") == "scalar"
+    assert kernel.eval('tag("a")') == "scalar"
+    assert kernel.eval("tag(1.5)") == "other"
+
+
+# -- specificity of the new nodes --------------------------------------------
+
+
+def test_condition_scores_as_its_inner_pattern():
+    from minimatic.ast.patterns import Blank, Condition, PatternBind
+    from minimatic.dispatch import score
+
+    guarded = score((Condition(PatternBind("x", Blank("int")), True),))
+    assert guarded == score((PatternBind("x", Blank("int")),))
+    assert guarded > score((Blank(None),))
+
+
+def test_alternatives_scores_as_its_weakest_branch():
+    from minimatic.ast.patterns import Alternatives, Blank
+    from minimatic.dispatch import score
+
+    # `_int | _` accepts everything `_` accepts, so it must not outrank `_`.
+    assert score((Alternatives((Blank("int"), Blank(None))),)) == score((Blank(None),))
+    assert score((Alternatives((Blank("int"), Blank("string"))),)) == score((Blank("int"),))

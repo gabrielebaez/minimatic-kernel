@@ -18,10 +18,14 @@ def _list(*items):
     return Expression(Symbol("List"), *items)
 
 
+def _hold(inner):
+    return Expression(Symbol("Hold"), inner)
+
+
 def test_tour_runs_without_error_and_produces_expected_results(kernel):
     results = kernel.eval_file(str(TOUR_PATH))
 
-    assert len(results) == 56
+    assert len(results) == 82
 
     # describe(5), describe("hi"), describe(3.14) — after 3 SetDelayed clauses
     assert results[3] == "an integer"
@@ -92,3 +96,35 @@ def test_tour_runs_without_error_and_produces_expected_results(kernel):
     assert results[53] == _list(3, 6, 9)
     assert results[54] == _list(6, 9, 12)  # right-assoc: inc first, then triple
     assert results[55] == 18
+
+    # guards + alternatives: tag (3 clauses), polarity (3), ordered (2)
+    assert results[59] == "scalar"
+    assert results[60] == "scalar"
+    assert results[61] == "list"
+    assert results[62] == "something else"
+    assert results[66] == "negative"
+    assert results[67] == "zero"
+    assert results[68] == "positive"
+    assert results[71] == "ok"
+    assert results[72] == "swapped"
+
+    # held code: expr, rule, rewritten, ReleaseHold
+    assert results[73] == _hold(
+        Expression(Symbol("plus"), Expression(Symbol("plus"),
+                                              Expression(Symbol("f"), 1),
+                                              Expression(Symbol("f"), 2)),
+                   Expression(Symbol("f"), 6))
+    )
+    assert results[75] == _hold(
+        Expression(Symbol("plus"), Expression(Symbol("plus"), 11, 12), 16)
+    )
+    assert results[76] == 39
+    assert results[77] == "was held"
+
+    # `->` computes the RHS, `:>` leaves it alone
+    assert results[78] == _hold(2)
+    assert results[79] == _hold(Expression(Symbol("plus"), 1, 1))
+
+    # `//.` to a normal form, then released
+    assert results[80] == _hold(Expression(Symbol("not"), True))
+    assert results[81] is False
