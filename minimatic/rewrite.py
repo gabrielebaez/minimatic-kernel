@@ -26,6 +26,7 @@ from .ast.expression import Expression
 from .ast.symbol import Symbol
 from .dict_ops import canonicalize_dict_patterns
 from .errors import MinimaticTypeError, RewriteLimitError
+from .identity import same
 from .match import match
 
 _RULE = Symbol("Rule")
@@ -99,7 +100,7 @@ def replace_repeated(
             raise RewriteLimitError(limit) from exc
         if _exceeds_size(nxt, node_limit):
             raise RewriteLimitError(node_limit, "nodes")
-        if _structurally_equal(nxt, current):
+        if same(nxt, current):
             return current
         current = nxt
     raise RewriteLimitError(limit)
@@ -121,25 +122,6 @@ def _exceeds_size(node, budget: int) -> bool:
             stack.append(current.head)
             stack.extend(current.tail)
     return False
-
-
-def _structurally_equal(a, b) -> bool:
-    """Fixpoint test for `//.`.
-
-    Not plain `==`: `Expression.__eq__` compares tails with Python `==`, so
-    `List(1)` and `List(True)` compare equal and a rewrite from one to the
-    other would look like a fixpoint. Same type-and-value rule `match()`
-    uses for literals, for the same reason.
-    """
-    if isinstance(a, Expression) or isinstance(b, Expression):
-        if not (isinstance(a, Expression) and isinstance(b, Expression)):
-            return False
-        return (
-            _structurally_equal(a.head, b.head)
-            and len(a.tail) == len(b.tail)
-            and all(_structurally_equal(x, y) for x, y in zip(a.tail, b.tail))
-        )
-    return type(a) is type(b) and a == b
 
 
 def substitute(node, bindings: dict):

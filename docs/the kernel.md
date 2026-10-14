@@ -361,7 +361,7 @@ def replace_repeated(node, rules, ctx, limit, node_limit) -> Node:
         nxt = replace_all(current, rules, ctx)
         if exceeds_size(nxt, node_limit):
             raise RewriteLimitError(node_limit, "nodes")
-        if structurally_equal(nxt, current):
+        if same(nxt, current):  # value identity
             return current
         current = nxt
     raise RewriteLimitError(limit)
@@ -540,6 +540,7 @@ minimatic/
   eval.py         # core loop (§4)
   dispatch.py     # ClauseSet, score(), Clause (§6)
   match.py        # match() — shared by dispatch.py and rewrite.py (§5)
+  identity.py     # value identity: same(), canonical_key() (ADR 0001)
   rewrite.py      # replace_all / replace_repeated / RewriteRule (§7)
   attributes.py   # attribute table (§8)
   result.py       # Err and the value/exception boundary (§9)

@@ -1,5 +1,7 @@
 """
-Dict ops - canonical keys, and the one place a `Dict` is built.
+Dict ops - the one place a `Dict` is built, and how it is read.
+
+Keys are compared and ordered by value identity (minimatic/identity.py).
 
 A `Dict` is an ordinary `Expression` headed by `Dict` whose arguments are
 `Rule(key, value)` expressions — no separate type, per kernel doc §2.1.
@@ -26,6 +28,7 @@ from .ast.expression import Expression
 from .ast.patterns import Alternatives, Condition, PatternBind
 from .ast.symbol import Symbol
 from .errors import MinimaticTypeError
+from .identity import canonical_key
 
 DICT = Symbol("Dict")
 RULE = Symbol("Rule")
@@ -33,42 +36,6 @@ RULE = Symbol("Rule")
 MISSING = object()
 """Returned by `dict_lookup` when a key is absent — distinct from every
 Minimatic value, so a stored `Null` stays tellable apart from no entry."""
-
-
-def canonical_key(key):
-    """A hashable, totally-ordered canonical form of a dict key.
-
-    One function, two jobs:
-
-    **Identity** — two keys are the same key exactly when their canonical
-    forms are equal. This reproduces `equal`'s `type(a) is type(b) and
-    a == b` rule recursively, which plain Python equality does not: `1` and
-    `1.0` would otherwise collide, `True` with `1`, and `List(1)` with
-    `List(True)` (the same trap `rewrite._structurally_equal` exists for).
-
-    **Ordering** — the leading integer rank makes forms from different
-    types mutually comparable, so `sorted` over mixed keys is total rather
-    than a TypeError. The ranking itself is arbitrary; the language
-    promises only that it is stable and total, not what it is. Do not
-    encode an expectation about it anywhere else.
-    """
-    if key is None:
-        return (0,)
-    if isinstance(key, bool):
-        # Before the int branch: bool is a subclass of int, and the whole
-        # point is that `True` is not the key `1`.
-        return (1, key)
-    if isinstance(key, (int, float)):
-        # Type name breaks the tie between `1` and `1.0`, which compare
-        # equal numerically but are different keys.
-        return (2, key, type(key).__name__)
-    if isinstance(key, str):
-        return (3, key)
-    if isinstance(key, Symbol):
-        return (4, key.name)
-    if isinstance(key, Expression):
-        return (5, canonical_key(key.head), tuple(canonical_key(a) for a in key.tail))
-    raise MinimaticTypeError(f"{key!r} cannot be a dict key")
 
 
 def build_dict(pairs) -> Expression:
@@ -124,7 +91,7 @@ def canonicalize_dict_patterns(node):
     the pattern reaches the matcher exactly as typed. Without this, whether
     `f({"b" -> 2, "a" -> 1}) := ...` matched would depend on the caller
     having written the same order -- and since the canonical order is
-    deliberately arbitrary (`canonical_key`), there would be no order a
+    deliberately arbitrary (`identity.canonical_key`), there would be no order a
     user could reliably write.
 
     Normalising the pattern the same way the value is normalised keeps this

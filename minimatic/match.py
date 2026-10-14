@@ -36,6 +36,7 @@ from .ast.patterns import (
 )
 from .ast.symbol import Symbol
 from .errors import MinimaticError, MinimaticTypeError
+from .identity import same
 
 _TYPE_CHECKS = {
     "int": is_integer,
@@ -154,10 +155,10 @@ def match(pattern, value, bindings: dict, ctx=None) -> dict | None:
             return None
         return match_all(pattern.tail, value.tail, bindings, ctx)
 
-    # Literal atom (int, float, str, bool, None): match by equal type + value,
-    # so `True` (bool) never accidentally matches `1` (int) via Python's
-    # `True == 1`.
-    return bindings if type(pattern) is type(value) and pattern == value else None
+    # Literal atom (int, float, str, bool, None): matches only the same
+    # value under value identity, so `True` never matches `1` and `1`
+    # never matches `1.0`.
+    return bindings if same(pattern, value) else None
 
 
 def _sequence_pattern(pat):

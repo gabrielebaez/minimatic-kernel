@@ -56,11 +56,7 @@ def test_non_rule_in_rule_position_is_a_runtime_error(kernel):
         kernel.eval("[1, 2] /. 5")
 
 
-def test_structural_equality_does_not_confuse_bools_with_ints():
-    """The fixpoint test for `//.` cannot use `==`: Expression.__eq__
-    compares tails with Python `==`, under which `List(1) == List(True)`."""
-    from minimatic.rewrite import _structurally_equal
-
-    assert _list(1) == _list(True)  # the trap
-    assert not _structurally_equal(_list(1), _list(True))
-    assert _structurally_equal(_list(1, "a"), _list(1, "a"))
+def test_replace_repeated_fixpoint_uses_value_identity(kernel):
+    """`[1]` -> `[True]` is a change, not a fixpoint: under Python `==`
+    the two lists compare equal and `//.` would hand back `[1]`."""
+    assert kernel.eval("[1] //. 1 -> True") == _list(True)
