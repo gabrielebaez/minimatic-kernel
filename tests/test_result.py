@@ -162,6 +162,25 @@ def test_divide_by_zero_is_a_value(kernel):
     assert kernel.eval("divide(1, 0) |> Args |> first") == "DivideByZero"
 
 
+def test_mod_by_zero_is_a_value(kernel):
+    assert kernel.eval("mod(1, 0) |> is_err") is True
+    assert kernel.eval("mod(1, 0) |> Args |> first") == "DivideByZero"
+    assert kernel.eval("mod(1.5, 0.0) |> Args |> first") == "DivideByZero"
+
+
+def test_zero_to_a_negative_power_is_a_value(kernel):
+    assert kernel.eval("power(0, -1) |> is_err") is True
+    assert kernel.eval("power(0, -1) |> Args |> first") == "DivideByZero"
+    assert kernel.eval("power(0.0, -2) |> Args |> first") == "DivideByZero"
+
+
+def test_listable_arithmetic_threads_a_zero_divisor_into_an_err_element(kernel):
+    assert kernel.eval("mod([7, 8], [2, 0]) |> first") == 1
+    assert kernel.eval("mod([7, 8], [2, 0]) |> rest |> first |> Args |> first") == "DivideByZero"
+    assert kernel.eval("power([2, 0], -1) |> first") == 0.5
+    assert kernel.eval("power([2, 0], -1) |> rest |> first |> Args |> first") == "DivideByZero"
+
+
 def test_first_of_empty_list_is_a_value(kernel):
     assert kernel.eval("first([]) |> Args |> first") == "EmptyList"
 
