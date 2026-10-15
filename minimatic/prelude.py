@@ -22,7 +22,6 @@ from .ast.symbol import Symbol
 from .dict_ops import (
     MISSING,
     build_dict,
-    canonical_key,
     check_dict,
     dict_lookup,
     dict_pairs,
@@ -30,6 +29,7 @@ from .dict_ops import (
 from .attributes import HoldAll, HoldFirst, HoldRest, Listable, ResultAware
 from .errors import MinimaticSyntaxError, MinimaticTypeError
 from .extend import register_head
+from .identity import canonical_key, same
 from .result import err, is_err_value
 from .rewrite import extract_rules, looks_like_rules, replace_all, replace_repeated
 
@@ -267,7 +267,7 @@ def _impl_switch(x_raw, *rest_raw, ctx=None):
     i = 0
     while i + 1 < len(rest_raw):
         case_val = ctx.eval(rest_raw[i])
-        if type(case_val) is type(x) and case_val == x:
+        if same(case_val, x):
             return ctx.eval(rest_raw[i + 1])
         i += 2
     if i < len(rest_raw):  # trailing default, no case attached to it
@@ -701,11 +701,11 @@ def _impl_not(a):
 
 
 def _impl_equal(a, b):
-    return type(a) is type(b) and a == b
+    return same(a, b)
 
 
 def _impl_not_equal(a, b):
-    return not _impl_equal(a, b)
+    return not same(a, b)
 
 
 def _impl_less(a, b):

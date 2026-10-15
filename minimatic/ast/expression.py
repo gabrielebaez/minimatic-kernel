@@ -155,18 +155,28 @@ class Expression(tuple):
 
     def __eq__(self, other: object) -> bool:
         """
-        Structural equality.
+        Structural equality under value identity (minimatic/identity.py).
 
-        Two expressions are equal if they have the same head and tail.
+        Two expressions are equal if their heads and arguments are pairwise
+        the same value -- type-strict, so `List(1)`, `List(1.0)` and
+        `List(True)` are three different expressions. Plain tuple `==`
+        would compare arguments with Python `==`, under which all three
+        are equal.
         """
         if self is other:
             return True
         if not isinstance(other, Expression):
             return False
         return (
-            self.head == other.head
-            and self.tail == other.tail
+            len(self.tail) == len(other.tail)
+            and _same(self.head, other.head)
+            and all(_same(a, b) for a, b in zip(self.tail, other.tail))
         )
+
+    def __ne__(self, other: object) -> bool:
+        # Needed explicitly: `tuple` defines its own `__ne__`, which would
+        # otherwise be inherited and compare with Python's laxer rule.
+        return not self.__eq__(other)
 
     def __repr__(self) -> str:
         """
@@ -243,3 +253,8 @@ def tail_of(elem: Element) -> tuple:
     if isinstance(elem, Expression):
         return elem.tail
     return ()
+
+
+# At the bottom, not the top: identity.py needs `Expression` defined, and
+# `Expression.__eq__` needs `same` -- this order lets both modules load.
+from ..identity import same as _same  # noqa: E402
