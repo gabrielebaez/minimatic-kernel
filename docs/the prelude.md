@@ -82,9 +82,9 @@ here, rather than ad hoc per-function:
 | `plus` | `plus(x, y, ...)` | `Listable` | `+` sugar |
 | `minus` | `minus(x, y)` | — | `-` sugar (binary); unary negation is `negate(x)` |
 | `times` | `times(x, y, ...)` | `Listable` | `*` sugar |
-| `divide` | `divide(x, y)` | — | `/` sugar; returns `Err("DivideByZero", _)` for `y == 0` rather than raising |
-| `power` | `power(x, y)` | — | `^` sugar |
-| `mod` | `mod(x, y)` | — | `%` sugar |
+| `divide` | `divide(x, y)` | `Listable` | `/` sugar; returns `Err("DivideByZero", _)` for `y == 0` rather than raising |
+| `power` | `power(x, y)` | `Listable` | `^` sugar; returns `Err("DivideByZero", _)` for `x == 0, y < 0` rather than raising |
+| `mod` | `mod(x, y)` | `Listable` | `%` sugar; returns `Err("DivideByZero", _)` for `y == 0` rather than raising |
 | `abs`, `floor`, `ceil`, `round` | `abs(x)` etc. | — | |
 | `min`, `max` | `min(x, y, ...)` | — | |
 | `equal`, `not_equal` | `equal(x, y)` | — | `==`, `!=` sugar; structural equality, defined over the shared `Node` representation (kernel doc §2) |

@@ -648,10 +648,16 @@ def _impl_divide(a, b):
 
 
 def _impl_power(a, b):
+    if a == 0 and b < 0:
+        # 0^-n is 1/0^n: the same routine failure as `divide`.
+        return err("DivideByZero", f"power: {a!r} to negative power {b!r}")
     return a**b
 
 
 def _impl_mod(a, b):
+    if b == 0:
+        # Same routine failure as `divide`, not a programming error.
+        return err("DivideByZero", f"mod: {a!r} by zero")
     return a % b
 
 
