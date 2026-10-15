@@ -28,6 +28,7 @@ from .dict_ops import (
 )
 from .attributes import HoldAll, HoldFirst, HoldRest, Listable, ResultAware
 from .errors import MinimaticSyntaxError, MinimaticTypeError
+from .eval import make_closure
 from .extend import register_head
 from .identity import canonical_key, same
 from .result import err, is_err_value
@@ -57,16 +58,14 @@ def _impl_set_delayed(lhs_call, body, ctx=None):
         raise MinimaticSyntaxError(
             "left-hand side of ':=' must be a function pattern like f(x: _int)"
         )
-    head_name = lhs_call.head.name
-    clause_set = ctx.registry.get_or_create(head_name)
-    clause_set.define(lhs_call.tail, body=body, guard=guard)
+    ctx.define(lhs_call.head.name, lhs_call.tail, body, guard=guard)
     return lhs_call.head
 
 
 def _impl_lambda(param, body, ctx=None):
     if not isinstance(param, Symbol):
         raise MinimaticSyntaxError("MVP lambdas take a single plain symbol parameter")
-    return Expression(Symbol("Closure"), param, body, ctx.env)
+    return make_closure(param, body, ctx.env)
 
 
 def _impl_rule(lhs, rhs, ctx=None):
@@ -191,7 +190,7 @@ def _target_is_result_aware(rhs_raw, ctx) -> bool:
             head = rhs_raw.head
     if head is None:
         return False
-    return ResultAware in ctx.registry.attributes(head.name)
+    return ResultAware in ctx.attributes(head.name)
 
 
 def _impl_pipe(lhs_val, rhs_raw, ctx=None):

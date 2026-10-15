@@ -31,19 +31,8 @@ from .ast.patterns import (
 )
 from .ast.symbol import Symbol
 from .dict_ops import canonicalize_dict_patterns
-from .errors import (
-    ArityError,
-    HeadAlreadySealedError,
-    MinimaticError,
-    MinimaticTypeError,
-    NoMatchingClauseError,
-)
+from .errors import HeadAlreadySealedError, NoMatchingClauseError
 from .match import eval_guard, match_all
-
-# Python exceptions a builtin may raise that mean "bad data", as opposed to
-# "the kernel has a bug". Deliberately narrow: AttributeError and friends
-# still surface as themselves rather than being disguised as user errors.
-_DATA_ERRORS = (ValueError, ZeroDivisionError, IndexError, KeyError)
 
 
 def _score_one(pattern) -> tuple:
@@ -92,22 +81,6 @@ def score(arg_patterns: tuple) -> tuple:
     return tuple(_score_one(p) for p in arg_patterns)
 
 
-def _arity_of(sig: inspect.Signature) -> str:
-    """Human-readable arity of a builtin, ignoring the injected `ctx`."""
-    params = [p for name, p in sig.parameters.items() if name != "ctx"]
-    positional = [
-        p
-        for p in params
-        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-    ]
-    required = sum(1 for p in positional if p.default is p.empty)
-    if any(p.kind is p.VAR_POSITIONAL for p in params):
-        return f"at least {required}"
-    if len(positional) != required:
-        return f"{required} to {len(positional)}"
-    return str(required)
-
-
 @dataclass
 class Clause:
     arg_patterns: tuple
@@ -118,20 +91,32 @@ class Clause:
     # after the argument patterns match. None for an unguarded clause.
     guard: object | None = None
     specificity: tuple = field(default=())
-    order: int = 0
+    # The scope the clause was defined in. Its guard, any guards inside its
+    # patterns, and its body all evaluate here -- extended with the new
+    # bindings -- never in the caller's scope. None for a Python builtin,
+    # which has no Minimatic scope of its own.
+    env: object | None = None
     # Cached at definition time, used only on the failure path (see
-    # ClauseSet._call_py) to tell an arity mistake from a type mistake.
+    # eval.py's builtin call) to tell an arity mistake from a type mistake.
     signature: inspect.Signature | None = None
 
 
 class ClauseSet:
+    """A head's clauses, ranked for selection.
+
+    Selection only: given arguments, which clause applies and with what
+    bindings. Running the clause -- calling a builtin, evaluating a body --
+    is head application's job (eval.py), so this module never evaluates
+    anything except the guards that decide selection.
+    """
+
     def __init__(self, head_name: str):
         self.head_name = head_name
         self.clauses: list[Clause] = []
         self.sealed = False
 
     def define(
-        self, arg_patterns, *, body=None, py_fn=None, pass_ctx=False, guard=None
+        self, arg_patterns, *, body=None, py_fn=None, pass_ctx=False, guard=None, env=None
     ) -> Clause:
         if self.sealed:
             raise HeadAlreadySealedError(self.head_name)
@@ -144,7 +129,7 @@ class ClauseSet:
             pass_ctx=pass_ctx,
             guard=guard,
             specificity=score(tuple(arg_patterns)),
-            order=len(self.clauses),
+            env=env,
             signature=inspect.signature(py_fn) if py_fn is not None else None,
         )
         self.clauses.append(clause)
@@ -164,57 +149,22 @@ class ClauseSet:
         self.clauses.sort(key=lambda c: c.specificity, reverse=True)
         return clause
 
-    def apply(self, args, env, evaluator: Callable, ctx=None):
+    def select(self, args: tuple, ctx) -> tuple[Clause, dict]:
+        """The first clause, in rank order, whose patterns match `args` and
+        whose guard holds -- with the bindings the match produced.
+
+        `ctx` is the call site's evaluation context. Guards of a clause
+        defined in Minimatic evaluate in that clause's own scope instead.
+        """
         self.sealed = True
-        args = tuple(args)
         for clause in self.clauses:
-            bindings = match_all(clause.arg_patterns, args, ctx=ctx)
+            clause_ctx = ctx if clause.env is None else ctx.with_env(clause.env)
+            bindings = match_all(clause.arg_patterns, args, ctx=clause_ctx)
             if bindings is None:
                 continue
-            if clause.guard is not None and not eval_guard(clause.guard, bindings, ctx):
+            if clause.guard is not None and not eval_guard(clause.guard, bindings, clause_ctx):
                 # Fall through to the next clause, never raise: a guard
                 # that says "not this one" is an ordinary dispatch outcome.
                 continue
-            if clause.py_fn is not None:
-                return self._call_py(clause, args, ctx)
-            return evaluator(clause.body, env.extend(bindings))
+            return clause, bindings
         raise NoMatchingClauseError(self.head_name, args)
-
-    def _call_py(self, clause: Clause, args: tuple, ctx):
-        """Invoke a Python-backed clause, keeping every failure inside the
-        `MinimaticError` hierarchy.
-
-        This is the single place builtins are called, so it is the only
-        place that has to know how. Before this, three kinds of failure
-        escaped as raw Python exceptions — a wrong-arity call, a bad
-        argument type (`plus(1, "a")`), and division by zero — so host code
-        catching "any Minimatic problem" silently missed them.
-
-        Classification happens *only* on the failure path: the call is
-        attempted first, so a successful dispatch pays nothing.
-        """
-        try:
-            if clause.pass_ctx:
-                return clause.py_fn(*args, ctx=ctx)
-            return clause.py_fn(*args)
-        except MinimaticError:
-            raise  # already ours, and already well-described
-        except TypeError as exc:
-            raise self._classify_type_error(clause, args, exc) from exc
-        except _DATA_ERRORS as exc:
-            raise MinimaticTypeError(f"{self.head_name}: {exc}") from exc
-
-    def _classify_type_error(self, clause: Clause, args: tuple, exc: TypeError):
-        """Was that TypeError the call itself not fitting the signature, or
-        something going wrong inside it? Re-binding the arguments answers
-        it without depending on CPython's error wording."""
-        sig = clause.signature
-        if sig is not None:
-            try:
-                if clause.pass_ctx:
-                    sig.bind(*args, ctx=None)
-                else:
-                    sig.bind(*args)
-            except TypeError:
-                return ArityError(self.head_name, _arity_of(sig), len(args))
-        return MinimaticTypeError(f"{self.head_name}: {exc}")

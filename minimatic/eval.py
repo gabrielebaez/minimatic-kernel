@@ -17,17 +17,29 @@ value. Without this fallback the language's own flagship example
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
-from typing import Callable
 
 from .ast.expression import Expression
 from .ast.symbol import Symbol
 from .attributes import Hold, HoldAll, HoldAllComplete, HoldFirst, HoldRest, Listable
 from .env import Env
-from .errors import ArityError, MinimaticTypeError, UnboundSymbolError, UnknownHeadError
+from .errors import (
+    ArityError,
+    MinimaticError,
+    MinimaticTypeError,
+    UnboundSymbolError,
+    UnknownHeadError,
+)
 from .registry import Registry
 
 _ATOMIC_TYPES = (int, float, str, bool, type(None))
+_CLOSURE = Symbol("Closure")
+
+# Python exceptions a builtin may raise that mean "bad data", as opposed to
+# "the kernel has a bug". Deliberately narrow: AttributeError and friends
+# still surface as themselves rather than being disguised as user errors.
+_DATA_ERRORS = (ValueError, ZeroDivisionError, IndexError, KeyError)
 _FULL_HOLD = {Hold, HoldAll, HoldAllComplete}
 
 
@@ -71,6 +83,29 @@ def _thread_listable(args: list) -> list[tuple] | None:
             row[i] = args[i].tail[idx]
         rows.append(tuple(row))
     return rows
+
+
+def _arity_of(sig: inspect.Signature) -> str:
+    """Human-readable arity of a builtin, ignoring the injected `ctx`."""
+    params = [p for name, p in sig.parameters.items() if name != "ctx"]
+    positional = [
+        p
+        for p in params
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    required = sum(1 for p in positional if p.default is p.empty)
+    if any(p.kind is p.VAR_POSITIONAL for p in params):
+        return f"at least {required}"
+    if len(positional) != required:
+        return f"{required} to {len(positional)}"
+    return str(required)
+
+
+def make_closure(param: Symbol, body, env: Env) -> Expression:
+    """The value a lambda evaluates to. Built here, next to the only code
+    that takes one apart (`Evaluator.apply_value`), so the layout of a
+    Closure is known in exactly one module."""
+    return Expression(_CLOSURE, param, body, env)
 
 
 class Evaluator:
@@ -118,16 +153,7 @@ class Evaluator:
                 arg if is_held(attrs, i) else self.eval(arg, env)
                 for i, arg in enumerate(node.tail)
             ]
-
-            ctx = Ctx(env, self)
-            if Listable in attrs:
-                rows = _thread_listable(eval_args)
-                if rows is not None:
-                    results = [
-                        clause_set.apply(list(row), env, self.eval, ctx=ctx) for row in rows
-                    ]
-                    return Expression(Symbol("List"), *results)
-            return clause_set.apply(eval_args, env, self.eval, ctx=ctx)
+            return self._apply_head(clause_set, attrs, eval_args, env)
 
         # Non-Symbol head: the result of a prior call (e.g. a Closure
         # returned by another call, as in curried application
@@ -144,7 +170,7 @@ class Evaluator:
         a Closure (from evaluating a Lambda) and a bare Symbol naming a
         registered head (e.g. `plus` passed into `fold`).
         """
-        if isinstance(fn_value, Expression) and fn_value.head == Symbol("Closure"):
+        if isinstance(fn_value, Expression) and fn_value.head == _CLOSURE:
             param, body, captured_env = fn_value.tail
             if len(arg_values) != 1:
                 raise ArityError("<lambda>", "1", len(arg_values))
@@ -155,24 +181,85 @@ class Evaluator:
             clause_set = self.registry.resolve(fn_value.name)
             if clause_set is None:
                 raise UnknownHeadError(fn_value.name)
-            ctx = Ctx(env, self)
-            return clause_set.apply(list(arg_values), env, self.eval, ctx=ctx)
+            attrs = self.registry.attributes(fn_value.name)
+            return self._apply_head(clause_set, attrs, list(arg_values), env)
 
         raise MinimaticTypeError(f"{fn_value!r} is not callable")
+
+    def _apply_head(self, clause_set, attrs: frozenset, args: list, env: Env):
+        """Apply a registered head to arguments that have already been
+        evaluated (or deliberately held). Every route to a head ends here --
+        a written call, a head passed as a value to `map`/`fold`, a curried
+        call, a pipe -- so `Listable` threading cannot depend on which one
+        it was."""
+        if Listable in attrs:
+            rows = _thread_listable(args)
+            if rows is not None:
+                return Expression(
+                    Symbol("List"),
+                    *(self._apply_head(clause_set, frozenset(), list(row), env) for row in rows),
+                )
+        ctx = Ctx(env, self)
+        clause, bindings = clause_set.select(tuple(args), ctx)
+        if clause.py_fn is not None:
+            return _call_builtin(clause_set.head_name, clause, tuple(args), ctx)
+        return self.eval(clause.body, clause.env.extend(bindings))
+
+
+def _call_builtin(head_name: str, clause, args: tuple, ctx):
+    """Invoke a Python-backed clause, keeping every failure inside the
+    `MinimaticError` hierarchy.
+
+    This is the single place builtins are called, so it is the only place
+    that has to know how. Before this, three kinds of failure escaped as
+    raw Python exceptions — a wrong-arity call, a bad argument type
+    (`plus(1, "a")`), and division by zero — so host code catching "any
+    Minimatic problem" silently missed them.
+
+    Classification happens *only* on the failure path: the call is
+    attempted first, so a successful call pays nothing.
+    """
+    try:
+        if clause.pass_ctx:
+            return clause.py_fn(*args, ctx=ctx)
+        return clause.py_fn(*args)
+    except MinimaticError:
+        raise  # already ours, and already well-described
+    except TypeError as exc:
+        raise _classify_type_error(head_name, clause, args, exc) from exc
+    except _DATA_ERRORS as exc:
+        raise MinimaticTypeError(f"{head_name}: {exc}") from exc
+
+
+def _classify_type_error(head_name: str, clause, args: tuple, exc: TypeError):
+    """Was that TypeError the call itself not fitting the signature, or
+    something going wrong inside it? Re-binding the arguments answers it
+    without depending on CPython's error wording."""
+    sig: inspect.Signature | None = clause.signature
+    if sig is not None:
+        try:
+            if clause.pass_ctx:
+                sig.bind(*args, ctx=None)
+            else:
+                sig.bind(*args)
+        except TypeError:
+            return ArityError(head_name, _arity_of(sig), len(args))
+    return MinimaticTypeError(f"{head_name}: {exc}")
 
 
 @dataclass
 class Ctx:
-    """Handed to Python builtins registered with pass_ctx=True, so they can
-    recurse back into evaluation (needed for higher-order heads like `map`
-    and `fold`, and for heads like `SetDelayed` that need registry access)."""
+    """What a Python builtin registered with pass_ctx=True gets: enough to
+    evaluate, apply, and define, without reaching into the registry.
+
+    `env` is the call site's scope. Higher-order heads (`map`, `fold`)
+    recurse through `eval`/`apply`; `SetDelayed` defines through `define`,
+    which captures this scope for the new clause; the pipe reads
+    `attributes` to decide whether to short-circuit an `Err`.
+    """
 
     env: Env
     evaluator: Evaluator
-
-    @property
-    def registry(self):
-        return self.evaluator.registry
 
     def eval(self, node, env: Env | None = None):
         return self.evaluator.eval(node, env if env is not None else self.env)
@@ -181,3 +268,17 @@ class Ctx:
         return self.evaluator.apply_value(
             fn_value, arg_values, env if env is not None else self.env
         )
+
+    def attributes(self, head_name: str) -> frozenset:
+        return self.evaluator.registry.attributes(head_name)
+
+    def define(self, head_name: str, arg_patterns, body, guard=None) -> None:
+        """Add a clause to `head_name`, defined in this context's scope."""
+        self.evaluator.registry.get_or_create(head_name).define(
+            arg_patterns, body=body, guard=guard, env=self.env
+        )
+
+    def with_env(self, env: Env) -> "Ctx":
+        """The same context, evaluating in `env` instead -- how a clause's
+        guards come to run in the scope the clause was defined in."""
+        return Ctx(env, self.evaluator)
