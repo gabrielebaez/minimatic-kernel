@@ -175,11 +175,15 @@ def eval(node: Node, env: Env) -> Node:
                 for i, a in enumerate(args)
             ]
 
-            if Attr.LISTABLE in attrs:
-                eval_args = thread_over_lists(eval_args)
-
-            return fn.apply(eval_args, env)   # dispatch happens inside apply()
+            return apply_head(fn, attrs, eval_args, env)
 ```
+
+`apply_head` is **head application**: the one path every call takes,
+whether written out, passed as a value to `map`/`fold`, curried, or piped.
+It threads `Listable` heads over lists, asks the clause set which clause
+applies (§6.4), and runs it: a builtin is called, a Minimatic body is
+evaluated in the scope its clause was *defined* in, extended with the new
+bindings — never in the caller's scope.
 
 ### 4.1 Single-pass, no evaluation fixpoint
 
@@ -321,11 +325,14 @@ means, precisely because the tie-break is specified rather than accidental.
 ### 6.4 Call-time dispatch
 
 ```python
-def apply(clause_set, args, env):
+def select(clause_set, args):
     for clause in clause_set:            # pre-sorted by specificity
         if (bindings := match_all(clause.pattern, args)) is not None:
-            return eval(clause.body, env.extend(bindings))
+            return clause, bindings      # guards evaluate in clause.env
     raise NoMatchingClauseError(clause_set.head_name, args)
+
+# head application then runs it:
+#   eval(clause.body, clause.env.extend(bindings))
 ```
 
 Because sorting is fully paid for at definition time, call-time dispatch is
@@ -537,8 +544,8 @@ minimatic/
   ast/            # Symbol, Expression, atoms, pattern node types
   lexer.py
   parser.py       # syntax -> tree; no semantic work
-  eval.py         # core loop (§4)
-  dispatch.py     # ClauseSet, score(), Clause (§6)
+  eval.py         # core loop and head application (§4), Ctx, Closure
+  dispatch.py     # ClauseSet (clause selection), score(), Clause (§6)
   match.py        # match() — shared by dispatch.py and rewrite.py (§5)
   identity.py     # value identity: same(), canonical_key() (ADR 0001)
   rewrite.py      # replace_all / replace_repeated / RewriteRule (§7)
